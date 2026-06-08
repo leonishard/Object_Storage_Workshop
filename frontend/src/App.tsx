@@ -1,5 +1,24 @@
 import { useState, useEffect, useRef } from "react";
 
+/* ─── helpers ───────────────────────────────────────────── */
+const EXPIRY_SECONDS = 3600; // must match backend
+
+function parsePresignedUrl(url: string) {
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.split("/").filter(Boolean);
+    const bucket = parts[0] ?? "—";
+    const key    = parts.slice(1).join("/") ?? "—";
+    const expiry = u.searchParams.get("X-Amz-Expires") ?? "—";
+    const sig    = u.searchParams.get("X-Amz-Signature") ?? "—";
+    const date   = u.searchParams.get("X-Amz-Date") ?? "—";
+    const host   = u.host;
+    return { bucket, key, expiry, sig: sig.slice(0, 16) + "…", date, host, raw: url };
+  } catch {
+    return null;
+  }
+}
+
 /* ─── types ─────────────────────────────────────────────── */
 interface GalleryItem {
   key: string;
@@ -245,18 +264,8 @@ function GalleryPage({ onOpenConcept }: { onOpenConcept: (id: ConceptId) => void
                 </div>
             )}
 
-            {/* Last upload quick info */}
-            {lastUpload && (
-                <div style={s.lastUpload}>
-                  <div style={s.lastUploadThumb}>
-                    <img src={lastUpload.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  </div>
-                  <div style={s.lastUploadMeta}>
-                    <span style={s.lastUploadName}>{lastUpload.key.replace(/^\d+-/, "")}</span>
-                    <span style={s.lastUploadSize}>{(lastUpload.size / 1024).toFixed(1)} KB</span>
-                  </div>
-                </div>
-            )}
+            {/* Presigned URL reveal */}
+            {lastUpload && <PresignedUrlReveal item={lastUpload} onOpenConcept={onOpenConcept} />}
 
             <div style={s.statRow}>
               <div style={s.stat}>
@@ -327,6 +336,115 @@ function GalleryPage({ onOpenConcept }: { onOpenConcept: (id: ConceptId) => void
               </div>
             </div>
         )}
+      </div>
+  );
+}
+
+/* ── Presigned URL Reveal ── */
+function PresignedUrlReveal({
+                              item,
+                              onOpenConcept,
+                            }: {
+  item: GalleryItem;
+  onOpenConcept: (id: ConceptId) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied]     = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(EXPIRY_SECONDS);
+  const parsed = parsePresignedUrl(item.url);
+
+  useEffect(() => {
+    setSecondsLeft(EXPIRY_SECONDS);
+    const t = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [item.url]);
+
+  function copy() {
+    navigator.clipboard.writeText(item.url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const pct   = secondsLeft / EXPIRY_SECONDS;
+  const mins  = Math.floor(secondsLeft / 60);
+  const secs  = secondsLeft % 60;
+  const color = pct > 0.5 ? "#10b981" : pct > 0.2 ? "#f59e0b" : "#ef4444";
+
+  return (
+      <div style={s.psuRoot}>
+        {/* header row */}
+        <div style={s.psuHeader}>
+          <div style={s.psuThumb}>
+            <img src={item.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={s.psuFileName}>{item.key.replace(/^\d+-/, "")}</div>
+            <div style={s.psuSubline}>{(item.size / 1024).toFixed(1)} KB · uploaded just now</div>
+          </div>
+          <button style={s.psuExpandBtn} onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "▲" : "▼"}
+          </button>
+        </div>
+
+        {/* expiry bar — always visible */}
+        <div style={s.psuExpiryRow}>
+          <div style={s.psuBarWrap}>
+            <div style={{ ...s.psuBar, width: `${pct * 100}%`, background: color }} />
+          </div>
+          <span style={{ ...s.psuTimer, color }}>
+          {secondsLeft > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : "Expired"}
+        </span>
+        </div>
+        <p style={s.psuExpiryNote}>
+          This URL is cryptographically signed and expires in 1 hour.
+          After that, anyone with the link gets a&nbsp;403.
+          <button style={s.psuLearnLink} onClick={() => onOpenConcept("presigned-url")}>
+            Learn why ↗
+          </button>
+        </p>
+
+        {/* expanded breakdown */}
+        {expanded && parsed && (
+            <div style={s.psuBreakdown}>
+              <p style={s.psuBreakdownTitle}>URL breakdown</p>
+
+              <UrlPart color="#3b82f6" label="Host" value={parsed.host}
+                       note="This is MinIO's endpoint — in production it'd be your S3 bucket domain or a CDN." />
+              <UrlPart color="#8b5cf6" label="Bucket / Key" value={`/${parsed.bucket}/${parsed.key}`}
+                       note="The bucket name followed by the object key. Think: shelf / box label." />
+              <UrlPart color="#f59e0b" label="X-Amz-Date" value={parsed.date}
+                       note="When the signature was generated. Baked into the signature so it can't be reused." />
+              <UrlPart color="#ef4444" label="X-Amz-Expires" value={`${parsed.expiry}s (1 hour)`}
+                       note="How long until the URL stops working. Change this digit — the signature breaks." />
+              <UrlPart color="#10b981" label="X-Amz-Signature" value={parsed.sig}
+                       note="An HMAC-SHA256 hash of the URL, expiry, and your secret key. Tamper with anything above and this won't match." />
+
+              <div style={s.psuRawWrap}>
+            <textarea
+                readOnly
+                value={item.url}
+                style={s.psuRawBox}
+                rows={3}
+                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+            />
+                <button style={s.psuCopyBtn} onClick={copy}>
+                  {copied ? "✓ Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+        )}
+      </div>
+  );
+}
+
+function UrlPart({ color, label, value, note }: { color: string; label: string; value: string; note: string }) {
+  return (
+      <div style={s.urlPart}>
+        <div style={{ ...s.urlPartLabel, color, borderColor: color + "44", background: color + "11" }}>{label}</div>
+        <div style={{ flex: 1 }}>
+          <code style={s.urlPartValue}>{value}</code>
+          <p style={s.urlPartNote}>{note}</p>
+        </div>
       </div>
   );
 }
@@ -708,26 +826,130 @@ const s: Record<string, React.CSSProperties> = {
     border: "1px solid",
   },
 
-  lastUpload: {
+  /* presigned url reveal */
+  psuRoot: {
+    background: "#fff",
+    border: "1px solid #e2e8f0",
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  psuHeader: {
     display: "flex",
     alignItems: "center",
     gap: 10,
     padding: "10px 12px",
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: 10,
+    borderBottom: "1px solid #f1f5f9",
   },
-  lastUploadThumb: {
-    width: 40,
-    height: 40,
+  psuThumb: {
+    width: 36,
+    height: 36,
     borderRadius: 6,
     overflow: "hidden",
     flexShrink: 0,
     background: "#f1f5f9",
   },
-  lastUploadMeta: { display: "flex", flexDirection: "column" as const, gap: 2, minWidth: 0 },
-  lastUploadName: { fontSize: 12, fontWeight: 500, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
-  lastUploadSize: { fontSize: 11, color: "#94a3b8" },
+  psuFileName: { fontSize: 12, fontWeight: 600, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
+  psuSubline:  { fontSize: 11, color: "#94a3b8", marginTop: 1 },
+  psuExpandBtn: {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: 10,
+    color: "#94a3b8",
+    padding: "4px 6px",
+    flexShrink: 0,
+  },
+  psuExpiryRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 12px 0",
+  },
+  psuBarWrap: {
+    flex: 1,
+    height: 4,
+    background: "#f1f5f9",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  psuBar: {
+    height: "100%",
+    borderRadius: 4,
+    transition: "width 1s linear, background .5s",
+  },
+  psuTimer: { fontSize: 11, fontWeight: 700, fontFamily: "monospace", whiteSpace: "nowrap" as const, minWidth: 52 },
+  psuExpiryNote: {
+    fontSize: 11,
+    color: "#64748b",
+    padding: "5px 12px 10px",
+    lineHeight: 1.6,
+    margin: 0,
+  },
+  psuLearnLink: {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: "#3b82f6",
+    fontSize: 11,
+    padding: "0 0 0 4px",
+    fontWeight: 600,
+  },
+  psuBreakdown: {
+    borderTop: "1px solid #f1f5f9",
+    padding: "12px 12px 14px",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+  },
+  psuBreakdownTitle: { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".5px", margin: 0 },
+  urlPart: { display: "flex", gap: 8, alignItems: "flex-start" },
+  urlPartLabel: {
+    fontSize: 10,
+    fontWeight: 700,
+    padding: "2px 6px",
+    borderRadius: 4,
+    border: "1px solid",
+    whiteSpace: "nowrap" as const,
+    flexShrink: 0,
+    marginTop: 1,
+    letterSpacing: ".3px",
+  },
+  urlPartValue: {
+    fontSize: 11,
+    fontFamily: "monospace",
+    color: "#1e293b",
+    display: "block",
+    wordBreak: "break-all" as const,
+    background: "#f8fafc",
+    padding: "2px 5px",
+    borderRadius: 3,
+  },
+  urlPartNote: { fontSize: 11, color: "#64748b", lineHeight: 1.5, margin: "3px 0 0" },
+  psuRawWrap: { display: "flex", gap: 6, alignItems: "flex-start", marginTop: 4 },
+  psuRawBox: {
+    flex: 1,
+    fontFamily: "monospace",
+    fontSize: 10,
+    padding: "7px 8px",
+    borderRadius: 6,
+    border: "1px solid #e2e8f0",
+    background: "#f8fafc",
+    resize: "none" as const,
+    color: "#475569",
+    lineHeight: 1.5,
+  },
+  psuCopyBtn: {
+    background: "#0f172a",
+    color: "#f1f5f9",
+    border: "none",
+    borderRadius: 6,
+    padding: "6px 12px",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap" as const,
+    flexShrink: 0,
+  },
 
   statRow: {
     display: "flex",
