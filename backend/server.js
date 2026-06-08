@@ -60,24 +60,27 @@ app.post("/upload", upload.single("image"), async (req, res) => {
 });
 
 // GET /presign-upload — generate a presigned PUT URL for direct browser-to-MinIO upload
-// The backend never touches the file bytes — it only signs a URL
+// The backend never touches the file bytes — it only signs a URL and returns it.
 app.get("/presign-upload", async (req, res) => {
   const { filename, contentType } = req.query;
   if (!filename) return res.status(400).json({ error: "filename required" });
 
   const key = `${Date.now()}-${filename}`;
-  const url = await getSignedUrl(
-    s3,
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      ContentType: contentType || "application/octet-stream",
-    }),
-    { expiresIn: 300 } // 5 minutes to complete the upload
-  );
 
-  console.log(`Presigned PUT issued for: ${key}`);
-  res.json({ url, key });
+  // ── STUDENT EXERCISE ─────────────────────────────────────────────────────
+  // Sign a PUT URL so the browser can upload directly to MinIO.
+  // Write the ~3 lines below, then delete the res.status(501) line.
+  //
+  //   Step 1 — build the command:   new PutObjectCommand({ Bucket, Key, ContentType })
+  //   Step 2 — sign it:             getSignedUrl(s3, command, { expiresIn: 300 })
+  //   Step 3 — respond:             res.json({ url, key })
+  //
+  // Pattern to copy: GET /gallery above does the same thing with GetObjectCommand.
+  // Both PutObjectCommand and getSignedUrl are already imported at the top of this file.
+  // ─────────────────────────────────────────────────────────────────────────
+  return res.status(501).json({
+    error: "Not implemented yet — open backend/server.js and complete the TODO in the /presign-upload route.",
+  });
 });
 
 // GET /gallery — list objects and return presigned GET URLs (ETag included)
