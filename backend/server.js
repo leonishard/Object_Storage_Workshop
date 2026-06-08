@@ -5,18 +5,18 @@ import multer from "multer";
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
   ListObjectsV2Command,
   CreateBucketCommand,
   HeadBucketCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { GetObjectCommand } from "@aws-sdk/client-s3";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Multer stores the upload in memory so we can stream it straight to MinIO
 const upload = multer({ storage: multer.memoryStorage() });
 
 const s3 = new S3Client({
@@ -31,7 +31,6 @@ const s3 = new S3Client({
 
 const BUCKET = process.env.MINIO_BUCKET;
 
-// Create the bucket if it doesn't exist yet
 async function ensureBucket() {
   try {
     await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
@@ -40,29 +39,48 @@ async function ensureBucket() {
     await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
     console.log(`Bucket "${BUCKET}" created`);
   }
+
+  // CORS for direct browser upload is configured via MINIO_API_CORS_ALLOW_ORIGIN in docker-compose.yml
 }
 
-// POST /upload  — accept a file, PUT it to MinIO
+// POST /upload — server-side upload (backend streams the bytes to MinIO)
 app.post("/upload", upload.single("image"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file provided" });
 
   const key = `${Date.now()}-${req.file.originalname}`;
+  await s3.send(new PutObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    Body: req.file.buffer,
+    ContentType: req.file.mimetype,
+  }));
 
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
-    })
-  );
-
-  console.log(`Uploaded: ${key}`);
+  console.log(`Uploaded (via server): ${key}`);
   res.json({ key });
 });
 
-// GET /gallery  — list all objects and return presigned URLs
-// This is the "wow" moment: the browser fetches images directly from MinIO
+// GET /presign-upload — generate a presigned PUT URL for direct browser-to-MinIO upload
+// The backend never touches the file bytes — it only signs a URL
+app.get("/presign-upload", async (req, res) => {
+  const { filename, contentType } = req.query;
+  if (!filename) return res.status(400).json({ error: "filename required" });
+
+  const key = `${Date.now()}-${filename}`;
+  const url = await getSignedUrl(
+    s3,
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      ContentType: contentType || "application/octet-stream",
+    }),
+    { expiresIn: 300 } // 5 minutes to complete the upload
+  );
+
+  console.log(`Presigned PUT issued for: ${key}`);
+  res.json({ url, key });
+});
+
+// GET /gallery — list objects and return presigned GET URLs (ETag included)
 app.get("/gallery", async (req, res) => {
   const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }));
   const objects = list.Contents ?? [];
@@ -72,15 +90,28 @@ app.get("/gallery", async (req, res) => {
       const url = await getSignedUrl(
         s3,
         new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
-        { expiresIn: 3600 } // URL valid for 1 hour
+        { expiresIn: 3600 }
       );
-      return { key: obj.Key, url, size: obj.Size, lastModified: obj.LastModified };
+      return {
+        key: obj.Key,
+        url,
+        size: obj.Size,
+        lastModified: obj.LastModified,
+        etag: obj.ETag?.replace(/"/g, ""), // S3 wraps ETags in quotes — strip them
+      };
     })
   );
 
-  // Newest first
   items.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
   res.json(items);
+});
+
+// DELETE /objects/:key — delete an object from the bucket
+app.delete("/objects/:key", async (req, res) => {
+  const key = decodeURIComponent(req.params.key);
+  await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  console.log(`Deleted: ${key}`);
+  res.json({ deleted: key });
 });
 
 const PORT = process.env.PORT ?? 3001;
