@@ -182,15 +182,26 @@ function GalleryPage({
   async function executeDirectUpload() {
     if (!directInfo) return;
     setUploading(true);
-    const res = await fetch(directInfo.url, {
+    // Route the PUT through Vite's dev proxy (/minio-direct → localhost:9000).
+    // This avoids the browser CORS block on cross-origin requests to port 9000.
+    // changeOrigin in vite.config.ts keeps the Host header as localhost:9000
+    // so the presigned-URL signature check still passes on MinIO's side.
+    const putUrl = directInfo.url.replace("http://localhost:9000", "/minio-direct");
+    const res = await fetch(putUrl, {
       method:  "PUT",
       body:    directInfo.file,
       headers: { "Content-Type": directInfo.file.type },
     });
     setUploading(false);
-    if (!res.ok) { setStatus({ ok: false, text: "Direct upload failed — check the console" }); return; }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      setStatus({ ok: false, text: `Direct upload failed (${res.status})${body ? ": " + body : ""}` });
+      return;
+    }
     setStatus({ ok: true, text: `"${directInfo.file.name}" uploaded directly to MinIO` });
     onExerciseComplete();
+    // Small delay — MinIO needs a moment to commit the object before ListObjectsV2 sees it
+    await new Promise((r) => setTimeout(r, 400));
     const updated = await fetchGallery();
     const newest  = updated.find((i) => i.key === directInfo.key);
     if (newest) setLastUpload(newest);
@@ -392,23 +403,23 @@ function GalleryPage({
 /* ── Flow diagram helpers ── */
 function FlowRow({ label, note, color }: { label: string; note: string; color: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, fontWeight: 600, color: "#1e293b" }}>{label}</span>
-      <span style={{ fontSize: 10, color: "#94a3b8" }}>{note}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}66` }} />
+      <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{label}</span>
+      <span style={{ fontSize: 11, color: "#94a3b8" }}>{note}</span>
     </div>
   );
 }
 function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; color?: string; dim?: boolean }) {
   return (
-    <div style={{ paddingLeft: 4, display: "flex", flexDirection: "column", gap: 1 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ width: 1, height: 16, background: "#e2e8f0", marginLeft: 3 }} />
-        <span style={{ fontSize: 10, color: dim ? "#cbd5e1" : color || "#64748b", fontFamily: "monospace", fontStyle: dim ? "italic" : "normal" }}>{label}</span>
+    <div style={{ paddingLeft: 5, display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 1, height: 18, background: "#e2e8f0", marginLeft: 4 }} />
+        <span style={{ fontSize: 11, color: dim ? "#cbd5e1" : color || "#64748b", fontFamily: "monospace", fontStyle: dim ? "italic" : "normal" }}>{label}</span>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ width: 1, height: 6, background: "#e2e8f0", marginLeft: 3 }} />
-        <span style={{ fontSize: 9, color: "#94a3b8" }}>{sub}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 1, height: 8, background: "#e2e8f0", marginLeft: 4 }} />
+        <span style={{ fontSize: 10, color: "#94a3b8" }}>{sub}</span>
       </div>
     </div>
   );
@@ -745,37 +756,37 @@ const s: Record<string, React.CSSProperties> = {
   chipArrow:   { fontSize: 10, opacity: 0.6 },
 
   /* sidebar */
-  sidebar:      { width: 280, flexShrink: 0, display: "flex", flexDirection: "column" as const, gap: 16 },
+  sidebar:      { width: 320, flexShrink: 0, display: "flex", flexDirection: "column" as const, gap: 20 },
   sectionTitle: { fontSize: 13, fontWeight: 700, color: "#64748b", textTransform: "uppercase" as const, letterSpacing: ".06em", marginBottom: 12 },
 
   /* mode toggle */
-  modeToggle:    { display: "flex", background: "#f1f5f9", borderRadius: 8, padding: 3, gap: 3 },
-  modeBtn:       { flex: 1, padding: "6px 8px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 6, cursor: "pointer", background: "transparent", color: "#64748b" },
+  modeToggle:    { display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 4 },
+  modeBtn:       { flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 7, cursor: "pointer", background: "transparent", color: "#64748b" },
   modeBtnActive: { background: "#fff", color: "#0f172a", boxShadow: "0 1px 3px rgba(0,0,0,.1)" },
 
   /* drop zone */
-  dropZone:       { border: "2px dashed #cbd5e1", borderRadius: 12, padding: "32px 20px", textAlign: "center" as const, cursor: "pointer", background: "#fff", transition: "all .15s", minHeight: 130 },
+  dropZone:       { border: "2px dashed #cbd5e1", borderRadius: 14, padding: "40px 28px", textAlign: "center" as const, cursor: "pointer", background: "#fff", transition: "all .15s", minHeight: 160 },
   dropZoneActive: { borderColor: "#3b82f6", background: "#eff6ff" },
-  dropIconWrap:   { display: "flex", justifyContent: "center", marginBottom: 10 },
-  dropText:       { fontSize: 13, color: "#475569", marginBottom: 4 },
-  dropSub:        { fontSize: 11, color: "#94a3b8" },
-  spinnerWrap:    { display: "flex", justifyContent: "center", padding: "12px 0" },
-  spinner:        { width: 28, height: 28, border: "3px solid #e2e8f0", borderTopColor: "#3b82f6", borderRadius: "50%", animation: "spin .7s linear infinite" },
-  uploadDirectBtn:{ padding: "8px 16px", background: "#10b981", color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  dropIconWrap:   { display: "flex", justifyContent: "center", marginBottom: 14 },
+  dropText:       { fontSize: 14, color: "#475569", marginBottom: 6 },
+  dropSub:        { fontSize: 12, color: "#94a3b8" },
+  spinnerWrap:    { display: "flex", justifyContent: "center", padding: "16px 0" },
+  spinner:        { width: 30, height: 30, border: "3px solid #e2e8f0", borderTopColor: "#3b82f6", borderRadius: "50%", animation: "spin .7s linear infinite" },
+  uploadDirectBtn:{ padding: "10px 20px", background: "#10b981", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 },
 
   /* direct upload panel */
-  directPanel:  { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column" as const, gap: 10 },
-  directLabel:  { fontSize: 11, fontWeight: 700, color: "#f97316", textTransform: "uppercase" as const, letterSpacing: ".4px" },
-  directUrlBox: { fontFamily: "monospace", fontSize: 10, padding: "7px 8px", borderRadius: 6, border: "1px solid #fed7aa", background: "#fff7ed", resize: "none" as const, color: "#9a3412", lineHeight: 1.5, width: "100%" },
-  flowDiagram:  { background: "#f8fafc", borderRadius: 6, padding: "10px 12px", display: "flex", flexDirection: "column" as const, gap: 4 },
+  directPanel:  { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column" as const, gap: 14 },
+  directLabel:  { fontSize: 11, fontWeight: 700, color: "#f97316", textTransform: "uppercase" as const, letterSpacing: ".5px" },
+  directUrlBox: { fontFamily: "monospace", fontSize: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid #fed7aa", background: "#fff7ed", resize: "none" as const, color: "#9a3412", lineHeight: 1.6, width: "100%" },
+  flowDiagram:  { background: "#f8fafc", borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column" as const, gap: 6 },
 
   /* exercise panel */
-  exercisePanel:      { background: "#fefce8", border: "1px solid #fde047", borderRadius: 10, padding: "14px 16px" },
-  exercisePanelTitle: { fontSize: 13, fontWeight: 700, color: "#713f12", marginBottom: 10 },
-  exerciseList:       { paddingLeft: 18, display: "flex", flexDirection: "column" as const, gap: 6 },
-  exerciseHint:       { fontSize: 11, color: "#92400e", marginTop: 10, marginBottom: 4 },
-  exerciseDone:       { fontSize: 11, color: "#166534", fontWeight: 600, margin: 0 },
-  inlineCode:         { background: "#fef3c7", padding: "1px 4px", borderRadius: 3, fontFamily: "monospace", fontSize: 11, color: "#78350f" },
+  exercisePanel:      { background: "#fefce8", border: "1px solid #fde047", borderRadius: 12, padding: "18px 20px" },
+  exercisePanelTitle: { fontSize: 14, fontWeight: 700, color: "#713f12", marginBottom: 14 },
+  exerciseList:       { paddingLeft: 20, display: "flex", flexDirection: "column" as const, gap: 8 },
+  exerciseHint:       { fontSize: 12, color: "#92400e", marginTop: 12, marginBottom: 6 },
+  exerciseDone:       { fontSize: 12, color: "#166534", fontWeight: 600, margin: 0 },
+  inlineCode:         { background: "#fef3c7", padding: "2px 5px", borderRadius: 3, fontFamily: "monospace", fontSize: 11, color: "#78350f" },
 
   statusBar: { padding: "10px 14px", borderRadius: 8, border: "1px solid" },
 
@@ -802,7 +813,7 @@ const s: Record<string, React.CSSProperties> = {
   psuRawBox:         { flex: 1, fontFamily: "monospace", fontSize: 10, padding: "7px 8px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", resize: "none" as const, color: "#475569", lineHeight: 1.5 },
   psuCopyBtn:        { background: "#0f172a", color: "#f1f5f9", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const, flexShrink: 0 },
 
-  statRow: { display: "flex", gap: 12, padding: "12px 0", borderTop: "1px solid #f1f5f9" },
+  statRow: { display: "flex", gap: 16, padding: "16px 0", borderTop: "1px solid #f1f5f9" },
   stat:    { flex: 1, display: "flex", flexDirection: "column" as const, gap: 2 },
   statVal: { fontSize: 22, fontWeight: 700, color: "#0f172a", lineHeight: 1 },
   statKey: { fontSize: 11, color: "#94a3b8" },
