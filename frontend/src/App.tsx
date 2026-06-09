@@ -21,27 +21,42 @@ function parsePresignedUrl(url: string) {
 
 /* ─── types ──────────────────────────────────────────────── */
 interface GalleryItem {
-  key: string;
-  url: string;
-  size: number;
+  key:          string;
+  url:          string;
+  size:         number;
   lastModified: string;
-  etag?: string;
-  metadata?: Record<string, string>;
+  etag?:        string;
+  metadata?:    Record<string, string>;
+}
+
+// ─── Erasure coding / node health ────────────────────────────────────────────
+interface NodeHealth {
+  id:     number;
+  status: "up" | "down";
+}
+
+interface ClusterHealth {
+  nodes:    NodeHealth[];
+  ec:       { total: number; data: number; parity: number };
+  canRead:  boolean;
+  canWrite: boolean;
+  upCount:  number;
 }
 
 type ConceptId =
-  | "presigned-url"
-  | "object-metadata"
-  | "buckets"
-  | "s3-api"
-  | "versioning"
-  | "bucket-policy"
-  | "direct-upload";
+    | "presigned-url"
+    | "object-metadata"
+    | "buckets"
+    | "s3-api"
+    | "versioning"
+    | "bucket-policy"
+    | "direct-upload"
+    | "erasure-coding";   // ← added
 
 interface InsightEvent {
   conceptId: ConceptId;
-  label: string;
-  detail: string;
+  label:     string;
+  detail:    string;
 }
 
 const CONCEPTS: Record<ConceptId, { title: string; anchor: string }> = {
@@ -52,6 +67,7 @@ const CONCEPTS: Record<ConceptId, { title: string; anchor: string }> = {
   versioning:        { title: "Versioning",         anchor: "concept-versioning" },
   "bucket-policy":   { title: "Bucket Policies",   anchor: "concept-policy" },
   "direct-upload":   { title: "Direct Upload",     anchor: "concept-direct-upload" },
+  "erasure-coding":  { title: "Erasure Coding",    anchor: "concept-erasure" },  // ← added
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -83,25 +99,25 @@ export default function App() {
   }, [tab, pendingAnchor]);
 
   return (
-    <div style={s.root}>
-      <style>{globalCss}</style>
-      <nav style={s.nav}>
-        <div style={s.navInner}>
-          <div style={s.navBrand}>
-            <span style={s.navDot} />
-            <span style={s.navTitle}>Stash</span>
-            <span style={s.navSub}>powered by MinIO</span>
+      <div style={s.root}>
+        <style>{globalCss}</style>
+        <nav style={s.nav}>
+          <div style={s.navInner}>
+            <div style={s.navBrand}>
+              <span style={s.navDot} />
+              <span style={s.navTitle}>Stash</span>
+              <span style={s.navSub}>powered by MinIO</span>
+            </div>
+            <div style={s.navTabs}>
+              <button style={{ ...s.navTab, ...(tab === "app"   ? s.navTabActive : {}) }} onClick={() => setTab("app")}>Gallery</button>
+              <button style={{ ...s.navTab, ...(tab === "learn" ? s.navTabActive : {}) }} onClick={() => setTab("learn")}>Under the Hood</button>
+            </div>
           </div>
-          <div style={s.navTabs}>
-            <button style={{ ...s.navTab, ...(tab === "app"   ? s.navTabActive : {}) }} onClick={() => setTab("app")}>Gallery</button>
-            <button style={{ ...s.navTab, ...(tab === "learn" ? s.navTabActive : {}) }} onClick={() => setTab("learn")}>Under the Hood</button>
-          </div>
-        </div>
-      </nav>
-      {tab === "app"
-        ? <GalleryPage onOpenConcept={openConcept} onExerciseComplete={() => setExerciseCompleted(true)} exerciseCompleted={exerciseCompleted} />
-        : <LearnPage exerciseCompleted={exerciseCompleted} />}
-    </div>
+        </nav>
+        {tab === "app"
+            ? <GalleryPage onOpenConcept={openConcept} onExerciseComplete={() => setExerciseCompleted(true)} exerciseCompleted={exerciseCompleted} />
+            : <LearnPage exerciseCompleted={exerciseCompleted} />}
+      </div>
   );
 }
 
@@ -109,11 +125,11 @@ export default function App() {
    GALLERY PAGE
 ═══════════════════════════════════════════════════════════ */
 function GalleryPage({
-  onOpenConcept,
-  onExerciseComplete,
-  exerciseCompleted,
-}: {
-  onOpenConcept:     (id: ConceptId) => void;
+                       onOpenConcept,
+                       onExerciseComplete,
+                       exerciseCompleted,
+                     }: {
+  onOpenConcept:      (id: ConceptId) => void;
   onExerciseComplete: () => void;
   exerciseCompleted:  boolean;
 }) {
@@ -128,11 +144,42 @@ function GalleryPage({
   const [uploadMode,  setUploadMode]  = useState<"server" | "direct">("server");
   const [directInfo,  setDirectInfo]  = useState<{ url: string; key: string; file: File } | null>(null);
   const [directReady, setDirectReady] = useState(false);
+
+  // ── Erasure coding: cluster health state ─────────────────────────────────
+  const [cluster, setCluster] = useState<ClusterHealth | null>(null);
+
   const fileRef = useRef<HTMLInputElement>(null);
 
   function pushInsight(ev: InsightEvent) {
     setInsights((prev) => prev.find((e) => e.conceptId === ev.conceptId) ? prev : [...prev, ev]);
   }
+
+  // ── Poll /nodes every 2 s ────────────────────────────────────────────────
+  // When a node goes down the panel updates within ~2 s + 900 ms timeout.
+  // Fires an insight chip the first time any node is detected offline.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pollNodes() {
+      try {
+        const r = await fetch("/nodes");
+        if (!r.ok || cancelled) return;
+        const data: ClusterHealth = await r.json();
+        setCluster(data);
+        if (data.upCount < 4) {
+          pushInsight({
+            conceptId: "erasure-coding",
+            label:     "Erasure coding active",
+            detail:    `${data.upCount}/4 nodes online — cluster still serving data via EC.`,
+          });
+        }
+      } catch { /* backend not ready yet — silent */ }
+    }
+
+    pollNodes();
+    const id = setInterval(pollNodes, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function fetchGallery() {
     const res  = await fetch("/gallery");
@@ -146,7 +193,7 @@ function GalleryPage({
     return data;
   }
 
-  useEffect(() => { fetchGallery(); }, []);
+  useEffect(() => { fetchGallery(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function serverUpload(file: File) {
     setUploading(true); setStatus(null); setLastUpload(null);
@@ -182,10 +229,6 @@ function GalleryPage({
   async function executeDirectUpload() {
     if (!directInfo) return;
     setUploading(true);
-    // Route the PUT through Vite's dev proxy (/minio-direct → localhost:9000).
-    // This avoids the browser CORS block on cross-origin requests to port 9000.
-    // changeOrigin in vite.config.ts keeps the Host header as localhost:9000
-    // so the presigned-URL signature check still passes on MinIO's side.
     const putUrl = directInfo.url.replace("http://localhost:9000", "/minio-direct");
     const res = await fetch(putUrl, {
       method:  "PUT",
@@ -200,7 +243,6 @@ function GalleryPage({
     }
     setStatus({ ok: true, text: `"${directInfo.file.name}" uploaded directly to MinIO` });
     onExerciseComplete();
-    // Small delay — MinIO needs a moment to commit the object before ListObjectsV2 sees it
     await new Promise((r) => setTimeout(r, 400));
     const updated = await fetchGallery();
     const newest  = updated.find((i) => i.key === directInfo.key);
@@ -228,200 +270,390 @@ function GalleryPage({
   }
 
   return (
-    <div style={s.pageWrap}>
-      {/* Insight ribbon */}
-      {insights.length > 0 && (
-        <div style={s.ribbon}>
-          <span style={s.ribbonLabel}>Concepts triggered →</span>
-          {insights.map((ins) => (
-            <button key={ins.conceptId} style={s.ribbonChip} title={ins.detail} onClick={() => onOpenConcept(ins.conceptId)}>
-              <span style={s.chipDot} />{CONCEPTS[ins.conceptId].title}<span style={s.chipArrow}>↗</span>
-            </button>
-          ))}
+      <div style={s.pageWrap}>
+
+        {/* ── Erasure coding / node status panel ── */}
+        <div style={{ paddingTop: 24, paddingBottom: 4 }}>
+          <NodeStatusPanel cluster={cluster} onOpenConcept={onOpenConcept} />
         </div>
-      )}
 
-      <div style={s.twoCol}>
-        {/* ── Sidebar ── */}
-        <aside style={s.sidebar}>
-
-          {/* Upload mode toggle */}
-          <div style={s.modeToggle}>
-            <button
-              style={{ ...s.modeBtn, ...(uploadMode === "server" ? s.modeBtnActive : {}) }}
-              onClick={() => { setUploadMode("server"); setDirectInfo(null); setDirectReady(false); }}
-            >Via Server</button>
-            <button
-              style={{ ...s.modeBtn, ...(uploadMode === "direct" ? s.modeBtnActive : {}) }}
-              onClick={() => { setUploadMode("direct"); setDirectInfo(null); setDirectReady(false); }}
-            >Direct to MinIO</button>
-          </div>
-
-          {/* Drop zone */}
-          <div
-            style={{ ...s.dropZone, ...(dragOver ? s.dropZoneActive : {}) }}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            onClick={() => !directReady && fileRef.current?.click()}
-          >
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
-              onChange={(e) => { if (e.target.files?.[0]) handleFileChange(e.target.files[0]); }} />
-            {uploading ? (
-              <div style={s.spinnerWrap}><div style={s.spinner} /></div>
-            ) : directReady && directInfo ? (
-              <div onClick={(e) => e.stopPropagation()}>
-                <p style={{ ...s.dropText, color: "#10b981", fontWeight: 600, marginBottom: 6 }}>✓ Upload URL ready</p>
-                <p style={{ ...s.dropSub, marginBottom: 10 }}>{directInfo.file.name}</p>
-                <button style={s.uploadDirectBtn} onClick={executeDirectUpload}>Upload to MinIO →</button>
-              </div>
-            ) : (
-              <>
-                <div style={s.dropIconWrap}>
-                  <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#94a3b8" }}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                  </svg>
-                </div>
-                <p style={s.dropText}>
-                  {uploadMode === "server" ? <>Drop an image or <u>click to browse</u></> : <>Pick a file to get a <u>presigned PUT URL</u></>}
-                </p>
-                <p style={s.dropSub}>PNG · JPG · GIF · WEBP</p>
-              </>
-            )}
-          </div>
-
-          {/* Direct upload: presigned URL + flow diagram */}
-          {uploadMode === "direct" && directInfo && (
-            <div style={s.directPanel}>
-              <p style={s.directLabel}>Step 1 — Signed PUT URL from server:</p>
-              <textarea readOnly value={directInfo.url} style={s.directUrlBox} rows={3}
-                onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
-              <div style={s.flowDiagram}>
-                <FlowRow label="Browser" note="your tab"   color="#3b82f6" />
-                <FlowArrow label="GET /presign-upload" sub="got the URL ✓" />
-                <FlowRow label="Backend" note="Express"    color="#8b5cf6" />
-                <FlowArrow label="— no file bytes —" sub="backend is done" dim />
-                <FlowArrow label="PUT {signed URL}" sub="step 2 →" color="#10b981" />
-                <FlowRow label="MinIO"   note=":9000"      color="#10b981" />
-              </div>
-            </div>
-          )}
-
-          {/* Exercise panel — shown in Direct mode until student completes it */}
-          {uploadMode === "direct" && !directInfo && !exerciseCompleted && (
-            <div style={s.exercisePanel}>
-              <p style={s.exercisePanelTitle}>📝 Your turn — implement this route</p>
-              <ol style={s.exerciseList}>
-                <li>Open <code style={s.inlineCode}>backend/server.js</code></li>
-                <li>Find <code style={s.inlineCode}>GET /presign-upload</code></li>
-                <li>Write the ~3 lines that build a <code style={s.inlineCode}>PutObjectCommand</code> and call <code style={s.inlineCode}>getSignedUrl</code> with <code style={s.inlineCode}>{"{ expiresIn: 300 }"}</code></li>
-                <li>Return <code style={s.inlineCode}>{"res.json({ url, key })"}</code></li>
-              </ol>
-              <p style={s.exerciseHint}>Hint: copy the pattern from <code style={s.inlineCode}>GET /gallery</code> above it.</p>
-              <p style={s.exerciseDone}>Done when: picking a file here succeeds ✓</p>
-            </div>
-          )}
-
-          {uploadMode === "direct" && !directInfo && exerciseCompleted && (
-            <div style={{ ...s.exercisePanel, background: "#f0fdf4", borderColor: "#86efac" }}>
-              <p style={{ ...s.exercisePanelTitle, color: "#166534" }}>✓ Exercise complete</p>
-              <p style={{ fontSize: 12, color: "#166534", margin: 0 }}>You implemented the presigned PUT route. Direct upload is live.</p>
-            </div>
-          )}
-
-          {status && (
-            <div style={{ ...s.statusBar, background: status.ok ? "#f0fdf4" : "#fff1f2", borderColor: status.ok ? "#86efac" : "#fda4af" }}>
-              <span style={{ color: status.ok ? "#166534" : "#9f1239", fontSize: 13 }}>{status.ok ? "✓" : "✗"} {status.text}</span>
-            </div>
-          )}
-
-          {lastUpload && <PresignedUrlReveal item={lastUpload} onOpenConcept={onOpenConcept} />}
-
-          <div style={s.statRow}>
-            <div style={s.stat}><span style={s.statVal}>{gallery.length}</span><span style={s.statKey}>objects</span></div>
-            <div style={s.stat}><span style={s.statVal}>{(gallery.reduce((a, b) => a + b.size, 0) / 1024).toFixed(0)}</span><span style={s.statKey}>KB stored</span></div>
-          </div>
-        </aside>
-
-        {/* ── Gallery grid ── */}
-        <main style={s.galleryArea}>
-          <div style={s.galleryTopBar}>
-            <h2 style={s.sectionTitle}>Gallery</h2>
-            <button onClick={fetchGallery} style={s.refreshBtn}>↻</button>
-          </div>
-          {gallery.length === 0 ? (
-            <div style={s.empty}>
-              <p style={{ fontSize: 48, margin: "0 0 12px" }}>🗄️</p>
-              <p style={{ color: "#64748b", margin: 0, fontSize: 14 }}>No images yet — upload one to get started.</p>
-            </div>
-          ) : (
-            <div style={s.grid}>
-              {gallery.map((item) => (
-                <div key={item.key} style={s.tile} onClick={() => setSelected(item)} className="gallery-tile">
-                  <div style={s.imgWrap}>
-                    <img src={item.url} alt={item.key} style={s.img} loading="lazy" />
-                  </div>
-                  <div style={s.tileCaption}>
-                    <span style={s.tileFilename}>{item.key.replace(/^\d+-/, "")}</span>
-                    <span style={s.tileMeta}>{(item.size / 1024).toFixed(1)} KB</span>
-                  </div>
-                </div>
+        {/* Insight ribbon */}
+        {insights.length > 0 && (
+            <div style={s.ribbon}>
+              <span style={s.ribbonLabel}>Concepts triggered →</span>
+              {insights.map((ins) => (
+                  <button key={ins.conceptId} style={s.ribbonChip} title={ins.detail} onClick={() => onOpenConcept(ins.conceptId)}>
+                    <span style={s.chipDot} />{CONCEPTS[ins.conceptId].title}<span style={s.chipArrow}>↗</span>
+                  </button>
               ))}
             </div>
-          )}
-        </main>
-      </div>
+        )}
 
-      {/* ── Detail modal ── */}
-      {selected && (
-        <div style={s.overlay} onClick={() => setSelected(null)}>
-          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
-            <button style={s.modalClose} onClick={() => setSelected(null)}>✕</button>
-            <div style={s.modalImgWrap}>
-              <img src={selected.url} alt={selected.key} style={s.modalImg} />
+        <div style={s.twoCol}>
+          {/* ── Sidebar ── */}
+          <aside style={s.sidebar}>
+
+            {/* Upload mode toggle */}
+            <div style={s.modeToggle}>
+              <button
+                  style={{ ...s.modeBtn, ...(uploadMode === "server" ? s.modeBtnActive : {}) }}
+                  onClick={() => { setUploadMode("server"); setDirectInfo(null); setDirectReady(false); }}
+              >Via Server</button>
+              <button
+                  style={{ ...s.modeBtn, ...(uploadMode === "direct" ? s.modeBtnActive : {}) }}
+                  onClick={() => { setUploadMode("direct"); setDirectInfo(null); setDirectReady(false); }}
+              >Direct to MinIO</button>
             </div>
-            <div style={s.modalInfo}>
-              <p style={s.modalFilename}>{selected.key.replace(/^\d+-/, "")}</p>
-              <div style={s.modalMeta}>
-                <MetaRow label="Object key"   value={selected.key} mono />
-                <MetaRow label="Size"         value={`${(selected.size / 1024).toFixed(2)} KB`} />
-                <MetaRow label="Last modified" value={new Date(selected.lastModified).toLocaleString()} />
-                {selected.etag && <MetaRow label="ETag (MD5)"  value={selected.etag} mono />}
-                {selected.metadata && Object.entries(selected.metadata).map(([k, v]) => <MetaRow key={k} label={k} value={v} />)}
+
+            {/* Drop zone */}
+            <div
+                style={{ ...s.dropZone, ...(dragOver ? s.dropZoneActive : {}) }}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => !directReady && fileRef.current?.click()}
+            >
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
+                     onChange={(e) => { if (e.target.files?.[0]) handleFileChange(e.target.files[0]); }} />
+              {uploading ? (
+                  <div style={s.spinnerWrap}><div style={s.spinner} /></div>
+              ) : directReady && directInfo ? (
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <p style={{ ...s.dropText, color: "#10b981", fontWeight: 600, marginBottom: 6 }}>✓ Upload URL ready</p>
+                    <p style={{ ...s.dropSub, marginBottom: 10 }}>{directInfo.file.name}</p>
+                    <button style={s.uploadDirectBtn} onClick={executeDirectUpload}>Upload to MinIO →</button>
+                  </div>
+              ) : (
+                  <>
+                    <div style={s.dropIconWrap}>
+                      <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#94a3b8" }}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                      </svg>
+                    </div>
+                    <p style={s.dropText}>
+                      {uploadMode === "server" ? <>Drop an image or <u>click to browse</u></> : <>Pick a file to get a <u>presigned PUT URL</u></>}
+                    </p>
+                    <p style={s.dropSub}>PNG · JPG · GIF · WEBP</p>
+                  </>
+              )}
+            </div>
+
+            {/* Direct upload: presigned URL + flow diagram */}
+            {uploadMode === "direct" && directInfo && (
+                <div style={s.directPanel}>
+                  <p style={s.directLabel}>Step 1 — Signed PUT URL from server:</p>
+                  <textarea readOnly value={directInfo.url} style={s.directUrlBox} rows={3}
+                            onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
+                  <div style={s.flowDiagram}>
+                    <FlowRow label="Browser" note="your tab"   color="#3b82f6" />
+                    <FlowArrow label="GET /presign-upload" sub="got the URL ✓" />
+                    <FlowRow label="Backend" note="Express"    color="#8b5cf6" />
+                    <FlowArrow label="— no file bytes —" sub="backend is done" dim />
+                    <FlowArrow label="PUT {signed URL}" sub="step 2 →" color="#10b981" />
+                    <FlowRow label="MinIO"   note=":9000"      color="#10b981" />
+                  </div>
+                </div>
+            )}
+
+            {/* Exercise panel */}
+            {uploadMode === "direct" && !directInfo && !exerciseCompleted && (
+                <div style={s.exercisePanel}>
+                  <p style={s.exercisePanelTitle}>📝 Your turn — implement this route</p>
+                  <ol style={s.exerciseList}>
+                    <li>Open <code style={s.inlineCode}>backend/server.js</code></li>
+                    <li>Find <code style={s.inlineCode}>GET /presign-upload</code></li>
+                    <li>Write the ~3 lines that build a <code style={s.inlineCode}>PutObjectCommand</code> and call <code style={s.inlineCode}>getSignedUrl</code> with <code style={s.inlineCode}>{"{ expiresIn: 300 }"}</code></li>
+                    <li>Return <code style={s.inlineCode}>{"res.json({ url, key })"}</code></li>
+                  </ol>
+                  <p style={s.exerciseHint}>Hint: copy the pattern from <code style={s.inlineCode}>GET /gallery</code> above it.</p>
+                  <p style={s.exerciseDone}>Done when: picking a file here succeeds ✓</p>
+                </div>
+            )}
+
+            {uploadMode === "direct" && !directInfo && exerciseCompleted && (
+                <div style={{ ...s.exercisePanel, background: "#f0fdf4", borderColor: "#86efac" }}>
+                  <p style={{ ...s.exercisePanelTitle, color: "#166534" }}>✓ Exercise complete</p>
+                  <p style={{ fontSize: 12, color: "#166534", margin: 0 }}>You implemented the presigned PUT route. Direct upload is live.</p>
+                </div>
+            )}
+
+            {status && (
+                <div style={{ ...s.statusBar, background: status.ok ? "#f0fdf4" : "#fff1f2", borderColor: status.ok ? "#86efac" : "#fda4af" }}>
+                  <span style={{ color: status.ok ? "#166534" : "#9f1239", fontSize: 13 }}>{status.ok ? "✓" : "✗"} {status.text}</span>
+                </div>
+            )}
+
+            {lastUpload && <PresignedUrlReveal item={lastUpload} onOpenConcept={onOpenConcept} />}
+
+            <div style={s.statRow}>
+              <div style={s.stat}><span style={s.statVal}>{gallery.length}</span><span style={s.statKey}>objects</span></div>
+              <div style={s.stat}><span style={s.statVal}>{(gallery.reduce((a, b) => a + b.size, 0) / 1024).toFixed(0)}</span><span style={s.statKey}>KB stored</span></div>
+            </div>
+          </aside>
+
+          {/* ── Gallery grid ── */}
+          <main style={s.galleryArea}>
+            <div style={s.galleryTopBar}>
+              <h2 style={s.sectionTitle}>Gallery</h2>
+              <button onClick={fetchGallery} style={s.refreshBtn}>↻</button>
+            </div>
+            {gallery.length === 0 ? (
+                <div style={s.empty}>
+                  <p style={{ fontSize: 48, margin: "0 0 12px" }}>🗄️</p>
+                  <p style={{ color: "#64748b", margin: 0, fontSize: 14 }}>No images yet — upload one to get started.</p>
+                </div>
+            ) : (
+                <div style={s.grid}>
+                  {gallery.map((item) => (
+                      <div key={item.key} style={s.tile} onClick={() => setSelected(item)} className="gallery-tile">
+                        <div style={s.imgWrap}>
+                          <img src={item.url} alt={item.key} style={s.img} loading="lazy" />
+                        </div>
+                        <div style={s.tileCaption}>
+                          <span style={s.tileFilename}>{item.key.replace(/^\d+-/, "")}</span>
+                          <span style={s.tileMeta}>{(item.size / 1024).toFixed(1)} KB</span>
+                        </div>
+                      </div>
+                  ))}
+                </div>
+            )}
+          </main>
+        </div>
+
+        {/* ── Detail modal ── */}
+        {selected && (
+            <div style={s.overlay} onClick={() => setSelected(null)}>
+              <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+                <button style={s.modalClose} onClick={() => setSelected(null)}>✕</button>
+                <div style={s.modalImgWrap}>
+                  <img src={selected.url} alt={selected.key} style={s.modalImg} />
+                </div>
+                <div style={s.modalInfo}>
+                  <p style={s.modalFilename}>{selected.key.replace(/^\d+-/, "")}</p>
+                  <div style={s.modalMeta}>
+                    <MetaRow label="Object key"    value={selected.key} mono />
+                    <MetaRow label="Size"          value={`${(selected.size / 1024).toFixed(2)} KB`} />
+                    <MetaRow label="Last modified" value={new Date(selected.lastModified).toLocaleString()} />
+                    {selected.etag && <MetaRow label="ETag (MD5)"  value={selected.etag} mono />}
+                    {selected.metadata && Object.entries(selected.metadata).map(([k, v]) => <MetaRow key={k} label={k} value={v} />)}
+                  </div>
+
+                  {/* Shard distribution — shows which node holds which shard of this object */}
+                  {cluster && (
+                      <div style={s.shardSection}>
+                        <p style={s.shardTitle}>Stored across {cluster.ec.total} nodes (EC:{cluster.ec.data}+{cluster.ec.parity})</p>
+                        <div style={s.shardGrid}>
+                          {cluster.nodes.map((node, i) => {
+                            const isData   = i < cluster.ec.data;
+                            const isUp     = node.status === "up";
+                            const color    = isData ? "#3b82f6" : "#8b5cf6";
+                            const label    = isData ? `D${i + 1}` : `P${i - cluster.ec.data + 1}`;
+                            const roleText = isData ? "data" : "parity";
+                            return (
+                                <div key={node.id} style={{
+                                  ...s.shardCard,
+                                  opacity:     isUp ? 1 : 0.45,
+                                  borderColor: isUp ? color + "55" : "#e2e8f0",
+                                  background:  isUp ? color + "11" : "#f8fafc",
+                                }}>
+                                  <div style={{ ...s.shardLabel, color: isUp ? color : "#94a3b8" }}>{label}</div>
+                                  <div style={s.shardNodeId}>Node {node.id}</div>
+                                  <div style={{ ...s.shardRole, color: isUp ? color : "#94a3b8" }}>{roleText}</div>
+                                  <div style={{
+                                    ...s.shardStatus,
+                                    color:      isUp ? "#10b981" : "#ef4444",
+                                  }}>{isUp ? "●" : "✕"}</div>
+                                </div>
+                            );
+                          })}
+                        </div>
+                        <p style={s.shardNote}>
+                          Any {cluster.ec.data} shards reconstruct this object.
+                          {cluster.upCount < cluster.ec.data
+                              ? " ⚠️ Below read quorum — object unreadable."
+                              : cluster.upCount < 3
+                                  ? " ✓ Readable  ✗ New uploads blocked (below write quorum)."
+                                  : " ✓ Fully operational."}
+                        </p>
+                      </div>
+                  )}
+
+                  <button style={s.deleteBtn} onClick={() => deleteObject(selected.key)} disabled={deleting}>
+                    {deleting ? "Deleting…" : "Delete object"}
+                  </button>
+                </div>
               </div>
-              <button style={s.deleteBtn} onClick={() => deleteObject(selected.key)} disabled={deleting}>
-                {deleting ? "Deleting…" : "Delete object"}
-              </button>
+            </div>
+        )}
+      </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NODE STATUS PANEL
+   Polls /nodes every 2 s via GalleryPage's useEffect.
+   Shows each node's live/down state, the EC formula,
+   and current read/write quorum.
+═══════════════════════════════════════════════════════════ */
+function NodeStatusPanel({
+                           cluster,
+                           onOpenConcept,
+                         }: {
+  cluster:       ClusterHealth | null;
+  onOpenConcept: (id: ConceptId) => void;
+}) {
+  // Loading skeleton while /nodes hasn't responded yet
+  if (!cluster) {
+    return (
+        <div style={{ ...s.ecPanel, opacity: 0.5 }}>
+          <div style={s.ecPanelHeader}>
+            <div style={s.ecTitle}>
+              <span style={s.ecTitleText}>Erasure Coding</span>
+              <span style={{ ...s.ecFormula, opacity: 0.4 }}>EC: —</span>
             </div>
           </div>
+          <div style={s.ecNodeRow}>
+            {[1, 2, 3, 4].map((id) => (
+                <div key={id} style={s.ecNodeCard}>
+                  <div style={{ ...s.ecNodeIndicator, background: "#e2e8f0" }} />
+                  <div style={s.ecNodeId}>Node {id}</div>
+                  <div style={{ ...s.ecShardBadge, background: "#f1f5f9", color: "#cbd5e1", borderColor: "#e2e8f0" }}>—</div>
+                  <div style={{ ...s.ecNodeStatus, color: "#cbd5e1" }}>…</div>
+                </div>
+            ))}
+          </div>
         </div>
-      )}
-    </div>
+    );
+  }
+
+  const { nodes, ec, canRead, canWrite, upCount } = cluster;
+
+  const statusMsg =
+      upCount === 4 ? "All nodes online — reads ✓  writes ✓" :
+          upCount === 3 ? `1 node down — reads ✓  writes ✓  (write quorum: ${upCount}/3)` :
+              upCount === 2 ? "2 nodes down — reads ✓  writes ✗  (below write quorum of 3)" :
+                  upCount === 1 ? "3 nodes down — reads ✗  writes ✗  (below read quorum of 2)" :
+                      "All nodes down — cluster offline";
+
+  const statusColor =
+      upCount === 4 ? "#10b981" :
+          upCount === 3 ? "#f59e0b" :
+              upCount === 2 ? "#f97316" :
+                  "#ef4444";
+
+  // Shard role labels + colours for each of the 4 nodes
+  const shardMeta = [
+    { label: "D1", color: "#3b82f6", title: "Data shard 1"   },
+    { label: "D2", color: "#3b82f6", title: "Data shard 2"   },
+    { label: "P1", color: "#8b5cf6", title: "Parity shard 1" },
+    { label: "P2", color: "#8b5cf6", title: "Parity shard 2" },
+  ];
+
+  return (
+      <div style={s.ecPanel}>
+        <div style={s.ecPanelHeader}>
+          <div style={s.ecTitle}>
+            <span style={s.ecTitleText}>Erasure Coding</span>
+            <span style={s.ecFormula}>EC: {ec.data}+{ec.parity}</span>
+            <span style={s.ecFormulaNote}>{ec.data} data · {ec.parity} parity · {ec.total} nodes</span>
+          </div>
+          <button style={s.ecLearnBtn} onClick={() => onOpenConcept("erasure-coding")}>
+            How it works ↗
+          </button>
+        </div>
+
+        {/* 4 node cards */}
+        <div style={s.ecNodeRow}>
+          {nodes.map((node, i) => {
+            const meta = shardMeta[i];
+            const isUp = node.status === "up";
+            return (
+                <div key={node.id} style={s.ecNodeCard}>
+                  <div style={{
+                    ...s.ecNodeIndicator,
+                    background: isUp ? "#10b981" : "#ef4444",
+                    boxShadow:  isUp ? "0 0 8px #10b98155" : "0 0 8px #ef444455",
+                  }} />
+                  <div style={s.ecNodeId}>Node {node.id}</div>
+                  <div
+                      title={meta.title}
+                      style={{
+                        ...s.ecShardBadge,
+                        background:  isUp ? meta.color + "22" : "#f1f5f9",
+                        color:       isUp ? meta.color        : "#94a3b8",
+                        borderColor: isUp ? meta.color + "55" : "#e2e8f0",
+                      }}
+                  >
+                    {meta.label}
+                  </div>
+                  <div style={{ ...s.ecNodeStatus, color: isUp ? "#10b981" : "#ef4444" }}>
+                    {isUp ? "online" : "offline"}
+                  </div>
+                </div>
+            );
+          })}
+        </div>
+
+        {/* Status bar */}
+        <div style={{
+          ...s.ecStatusBar,
+          borderColor: statusColor + "44",
+          background:  statusColor + "11",
+        }}>
+          <div style={{
+            ...s.ecStatusDot,
+            background: statusColor,
+            boxShadow:  `0 0 6px ${statusColor}66`,
+          }} />
+          <span style={{ ...s.ecStatusMsg, color: statusColor }}>{statusMsg}</span>
+          <div style={s.ecQuorumBadges}>
+          <span style={{
+            ...s.ecQuorumBadge,
+            background: canRead  ? "#dcfce7" : "#fef2f2",
+            color:      canRead  ? "#166534" : "#991b1b",
+          }}>
+            Read {canRead ? "✓" : "✗"}
+          </span>
+            <span style={{
+              ...s.ecQuorumBadge,
+              background: canWrite ? "#dcfce7" : "#fef2f2",
+              color:      canWrite ? "#166534" : "#991b1b",
+            }}>
+            Write {canWrite ? "✓" : "✗"}
+          </span>
+          </div>
+        </div>
+
+        {/* Demo hint */}
+        <p style={s.ecHint}>
+          Demo: run <code style={s.ecHintCode}>docker compose stop minio3</code> in a terminal and watch this panel update.
+        </p>
+      </div>
   );
 }
 
 /* ── Flow diagram helpers ── */
 function FlowRow({ label, note, color }: { label: string; note: string; color: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}66` }} />
-      <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{label}</span>
-      <span style={{ fontSize: 11, color: "#94a3b8" }}>{note}</span>
-    </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}66` }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>{label}</span>
+        <span style={{ fontSize: 11, color: "#94a3b8" }}>{note}</span>
+      </div>
   );
 }
 function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; color?: string; dim?: boolean }) {
   return (
-    <div style={{ paddingLeft: 5, display: "flex", flexDirection: "column", gap: 2 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={{ width: 1, height: 18, background: "#e2e8f0", marginLeft: 4 }} />
-        <span style={{ fontSize: 11, color: dim ? "#cbd5e1" : color || "#64748b", fontFamily: "monospace", fontStyle: dim ? "italic" : "normal" }}>{label}</span>
+      <div style={{ paddingLeft: 5, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 1, height: 18, background: "#e2e8f0", marginLeft: 4 }} />
+          <span style={{ fontSize: 11, color: dim ? "#cbd5e1" : color || "#64748b", fontFamily: "monospace", fontStyle: dim ? "italic" : "normal" }}>{label}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 1, height: 8, background: "#e2e8f0", marginLeft: 4 }} />
+          <span style={{ fontSize: 10, color: "#94a3b8" }}>{sub}</span>
+        </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={{ width: 1, height: 8, background: "#e2e8f0", marginLeft: 4 }} />
-        <span style={{ fontSize: 10, color: "#94a3b8" }}>{sub}</span>
-      </div>
-    </div>
   );
 }
 
@@ -446,59 +678,59 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
   const color = pct > 0.5 ? "#10b981" : pct > 0.2 ? "#f59e0b" : "#ef4444";
 
   return (
-    <div style={s.psuRoot}>
-      <div style={s.psuHeader}>
-        <div style={s.psuThumb}><img src={item.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /></div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={s.psuFileName}>{item.key.replace(/^\d+-/, "")}</div>
-          <div style={s.psuSubline}>{(item.size / 1024).toFixed(1)} KB · uploaded just now</div>
-        </div>
-        <button style={s.psuExpandBtn} onClick={() => setExpanded((v) => !v)}>{expanded ? "▲" : "▼"}</button>
-      </div>
-      <div style={s.psuExpiryRow}>
-        <div style={s.psuBarWrap}><div style={{ ...s.psuBar, width: `${pct * 100}%`, background: color }} /></div>
-        <span style={{ ...s.psuTimer, color }}>{secondsLeft > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : "Expired"}</span>
-      </div>
-      <p style={s.psuExpiryNote}>
-        Signed GET URL — expires in 1 hour. After that, anyone with the link gets a 403.
-        <button style={s.psuLearnLink} onClick={() => onOpenConcept("presigned-url")}>Learn why ↗</button>
-      </p>
-      {expanded && parsed && (
-        <div style={s.psuBreakdown}>
-          <p style={s.psuBreakdownTitle}>URL breakdown</p>
-          <UrlPart color="#3b82f6" label="Host"            value={parsed.host}                    note="MinIO's endpoint. In production: your S3 domain or CDN." />
-          <UrlPart color="#8b5cf6" label="Bucket / Key"    value={`/${parsed.bucket}/${parsed.key}`} note="Bucket name + object key." />
-          <UrlPart color="#f59e0b" label="X-Amz-Date"      value={parsed.date}                    note="When the signature was generated — baked in so it can't be reused." />
-          <UrlPart color="#ef4444" label="X-Amz-Expires"   value={`${parsed.expiry}s`}            note="How long until the URL stops working. Tamper with this and the signature breaks." />
-          <UrlPart color="#10b981" label="X-Amz-Signature" value={parsed.sig}                     note="HMAC-SHA256 of the URL + expiry + your secret key. Change anything above and this won't match." />
-          <div style={s.psuRawWrap}>
-            <textarea readOnly value={item.url} style={s.psuRawBox} rows={3} onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
-            <button style={s.psuCopyBtn} onClick={copy}>{copied ? "✓ Copied" : "Copy"}</button>
+      <div style={s.psuRoot}>
+        <div style={s.psuHeader}>
+          <div style={s.psuThumb}><img src={item.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /></div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={s.psuFileName}>{item.key.replace(/^\d+-/, "")}</div>
+            <div style={s.psuSubline}>{(item.size / 1024).toFixed(1)} KB · uploaded just now</div>
           </div>
+          <button style={s.psuExpandBtn} onClick={() => setExpanded((v) => !v)}>{expanded ? "▲" : "▼"}</button>
         </div>
-      )}
-    </div>
+        <div style={s.psuExpiryRow}>
+          <div style={s.psuBarWrap}><div style={{ ...s.psuBar, width: `${pct * 100}%`, background: color }} /></div>
+          <span style={{ ...s.psuTimer, color }}>{secondsLeft > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : "Expired"}</span>
+        </div>
+        <p style={s.psuExpiryNote}>
+          Signed GET URL — expires in 1 hour. After that, anyone with the link gets a 403.
+          <button style={s.psuLearnLink} onClick={() => onOpenConcept("presigned-url")}>Learn why ↗</button>
+        </p>
+        {expanded && parsed && (
+            <div style={s.psuBreakdown}>
+              <p style={s.psuBreakdownTitle}>URL breakdown</p>
+              <UrlPart color="#3b82f6" label="Host"            value={parsed.host}                    note="MinIO's endpoint. In production: your S3 domain or CDN." />
+              <UrlPart color="#8b5cf6" label="Bucket / Key"    value={`/${parsed.bucket}/${parsed.key}`} note="Bucket name + object key." />
+              <UrlPart color="#f59e0b" label="X-Amz-Date"      value={parsed.date}                    note="When the signature was generated — baked in so it can't be reused." />
+              <UrlPart color="#ef4444" label="X-Amz-Expires"   value={`${parsed.expiry}s`}            note="How long until the URL stops working. Tamper with this and the signature breaks." />
+              <UrlPart color="#10b981" label="X-Amz-Signature" value={parsed.sig}                     note="HMAC-SHA256 of the URL + expiry + your secret key. Change anything above and this won't match." />
+              <div style={s.psuRawWrap}>
+                <textarea readOnly value={item.url} style={s.psuRawBox} rows={3} onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
+                <button style={s.psuCopyBtn} onClick={copy}>{copied ? "✓ Copied" : "Copy"}</button>
+              </div>
+            </div>
+        )}
+      </div>
   );
 }
 
 function UrlPart({ color, label, value, note }: { color: string; label: string; value: string; note: string }) {
   return (
-    <div style={s.urlPart}>
-      <div style={{ ...s.urlPartLabel, color, borderColor: color + "44", background: color + "11" }}>{label}</div>
-      <div style={{ flex: 1 }}>
-        <code style={s.urlPartValue}>{value}</code>
-        <p style={s.urlPartNote}>{note}</p>
+      <div style={s.urlPart}>
+        <div style={{ ...s.urlPartLabel, color, borderColor: color + "44", background: color + "11" }}>{label}</div>
+        <div style={{ flex: 1 }}>
+          <code style={s.urlPartValue}>{value}</code>
+          <p style={s.urlPartNote}>{note}</p>
+        </div>
       </div>
-    </div>
   );
 }
 
 function MetaRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div style={s.metaRow}>
-      <span style={s.metaLabel}>{label}</span>
-      <span style={{ ...s.metaValue, ...(mono ? { fontFamily: "monospace", fontSize: 11 } : {}) }}>{value}</span>
-    </div>
+      <div style={s.metaRow}>
+        <span style={s.metaLabel}>{label}</span>
+        <span style={{ ...s.metaValue, ...(mono ? { fontFamily: "monospace", fontSize: 11 } : {}) }}>{value}</span>
+      </div>
   );
 }
 
@@ -507,110 +739,109 @@ function MetaRow({ label, value, mono }: { label: string; value: string; mono?: 
 ═══════════════════════════════════════════════════════════ */
 function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
   return (
-    <div style={s.learnWrap}>
-      <div style={s.learnHeader}>
-        <h1 style={s.learnH1}>Under the Hood</h1>
-        <p style={s.learnSubtitle}>Theory behind what you just did in the Gallery tab.</p>
-      </div>
-
-      {/* ── Core ideas ── */}
-      <div style={s.coreBlock}>
-        <p style={s.coreBlockLabel}>Core ideas</p>
-        <div style={s.coreGrid}>
-          <CoreIdea
-            title="Objects are flat"
-            text="An object = bytes + a key + metadata, stored in a flat bucket. Keys look like paths but folders aren't real — the / is just part of the key string."
-          />
-          <CoreIdea
-            title="Storage ≠ database"
-            text="Store the blob in object storage, store a pointer (the key) plus searchable fields in your database. Object storage isn't a database."
-          />
-          <CoreIdea
-            title="Code against the API, not the vendor"
-            text="The same SDK code runs on MinIO, AWS S3, Cloudflare R2, or Backblaze B2 — you change one config line, not your code."
-          />
+      <div style={s.learnWrap}>
+        <div style={s.learnHeader}>
+          <h1 style={s.learnH1}>Under the Hood</h1>
+          <p style={s.learnSubtitle}>Theory behind what you just did in the Gallery tab.</p>
         </div>
-      </div>
 
-      {/* ── 4 concept cards ── */}
-      <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#3b82f6">
-        <p>
-          A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things:
-          bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are
-          just two strings that share a prefix.
-        </p>
-        <p>
-          The "folder" the MinIO console draws for <code>2024/</code> is invented by the UI. ListObjectsV2 lets you
-          filter by prefix to simulate folders, but the storage layer is flat.
-        </p>
-        <CodeBlock>{`// What the backend runs every time you open the Gallery tab:
+        {/* ── Core ideas ── */}
+        <div style={s.coreBlock}>
+          <p style={s.coreBlockLabel}>Core ideas</p>
+          <div style={s.coreGrid}>
+            <CoreIdea
+                title="Objects are flat"
+                text="An object = bytes + a key + metadata, stored in a flat bucket. Keys look like paths but folders aren't real — the / is just part of the key string."
+            />
+            <CoreIdea
+                title="Storage ≠ database"
+                text="Store the blob in object storage, store a pointer (the key) plus searchable fields in your database. Object storage isn't a database."
+            />
+            <CoreIdea
+                title="Code against the API, not the vendor"
+                text="The same SDK code runs on MinIO, AWS S3, Cloudflare R2, or Backblaze B2 — you change one config line, not your code."
+            />
+          </div>
+        </div>
+
+        {/* ── Concept cards ── */}
+        <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#3b82f6">
+          <p>
+            A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things:
+            bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are
+            just two strings that share a prefix.
+          </p>
+          <p>
+            The "folder" the MinIO console draws for <code>2024/</code> is invented by the UI. ListObjectsV2 lets you
+            filter by prefix to simulate folders, but the storage layer is flat.
+          </p>
+          <CodeBlock>{`// What the backend runs every time you open the Gallery tab:
 const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" }));
 // Each entry: { Key, Size, ETag, LastModified }
 // Key examples: "1719000000-cat.jpg"  "1719000001-dog.png"`}</CodeBlock>
-        <InfoBox>In the gallery, click any image. The <strong>Object key</strong> row in the metadata panel shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
-      </ConceptCard>
+          <InfoBox>In the gallery, click any image. The <strong>Object key</strong> row in the metadata panel shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
+        </ConceptCard>
 
-      <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#10b981">
-        <p>
-          After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal
-          HTTPS URL with an HMAC-SHA256 signature baked into the query string — MinIO verifies it without
-          storing any session.
-        </p>
-        <p>
-          The browser loads images <strong>directly from MinIO</strong> — the Express server is not in the
-          transfer loop. Change one character in the URL and the signature check fails with a 403.
-        </p>
-        <CodeBlock>{`const url = await getSignedUrl(
+        <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#10b981">
+          <p>
+            After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal
+            HTTPS URL with an HMAC-SHA256 signature baked into the query string — MinIO verifies it without
+            storing any session.
+          </p>
+          <p>
+            The browser loads images <strong>directly from MinIO</strong> — the Express server is not in the
+            transfer loop. Change one character in the URL and the signature check fails with a 403.
+          </p>
+          <CodeBlock>{`const url = await getSignedUrl(
   s3,
   new GetObjectCommand({ Bucket: BUCKET, Key: "1719000000-cat.jpg" }),
   { expiresIn: 3600 }   // valid for 1 hour
 );
 // → http://localhost:9000/workshop-images/1719000000-cat.jpg
 //     ?X-Amz-Expires=3600&X-Amz-Signature=a3f8b2…`}</CodeBlock>
-        <InfoBox>
-          Open DevTools → Network, then hit Refresh in the gallery. Image requests go to <code>:9000</code> (MinIO),
-          not <code>:3001</code> (Express). The countdown timer in the sidebar shows the URL expiring in real time.
-        </InfoBox>
-      </ConceptCard>
+          <InfoBox>
+            Open DevTools → Network, then hit Refresh in the gallery. Image requests go to <code>:9000</code> (MinIO via nginx),
+            not <code>:3001</code> (Express). The countdown timer in the sidebar shows the URL expiring in real time.
+          </InfoBox>
+        </ConceptCard>
 
-      <ConceptCard
-        id="concept-direct-upload"
-        badge="03"
-        title="Direct Upload — Presigned PUT"
-        tagline="Backend as keyholder, not middleman"
-        color="#f97316"
-        exerciseBadge={{ completed: exerciseCompleted }}
-      >
-        <p>
-          A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the
-          browser uploads straight to MinIO. The server never touches the file bytes — it only holds the
-          secret key and uses it to sign requests.
-        </p>
-        <CodeBlock>{`// Via server (default tab):
+        <ConceptCard
+            id="concept-direct-upload"
+            badge="03"
+            title="Direct Upload — Presigned PUT"
+            tagline="Backend as keyholder, not middleman"
+            color="#f97316"
+            exerciseBadge={{ completed: exerciseCompleted }}
+        >
+          <p>
+            A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the
+            browser uploads straight to MinIO. The server never touches the file bytes — it only holds the
+            secret key and uses it to sign requests.
+          </p>
+          <CodeBlock>{`// Via server (default tab):
 Browser ──POST /upload──▶ Backend ──PutObject──▶ MinIO
          (file bytes flow through Express)
 
 // Direct upload ("Direct to MinIO" tab):
 Browser ──GET /presign-upload──▶ Backend   ← only a tiny JSON response
 Browser ──PUT {signed URL}────────────────▶ MinIO   ← file bytes go here directly`}</CodeBlock>
-        <p>
-          The backend is the <strong>keyholder</strong>: it holds the MinIO credentials and uses them only
-          to sign URLs (upload, list, read). The browser never sees a secret key — only a time-limited
-          signed URL that MinIO will accept.
-        </p>
-        <InfoBox>
-          Switch to "Direct to MinIO" in the Gallery tab. When you pick a file, the app asks the backend
-          for a signed PUT URL and shows it in the flow diagram before you upload. The PUT goes straight
-          to <code>:9000</code>.
-        </InfoBox>
-      </ConceptCard>
+          <p>
+            The backend is the <strong>keyholder</strong>: it holds the MinIO credentials and uses them only
+            to sign URLs. The browser never sees a secret key — only a time-limited signed URL that MinIO will accept.
+          </p>
+          <InfoBox>
+            Switch to "Direct to MinIO" in the Gallery tab. When you pick a file, the app asks the backend
+            for a signed PUT URL and shows it in the flow diagram before you upload. The PUT goes straight
+            to <code>:9000</code>.
+          </InfoBox>
+        </ConceptCard>
 
-      <ConceptCard id="concept-s3" badge="04" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#8b5cf6">
-        <p>
-          Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API.
-          The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.
-        </p>
-        <CodeBlock>{`// Dev (MinIO in Docker):
+        <ConceptCard id="concept-s3" badge="04" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#8b5cf6">
+          <p>
+            Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API.
+            The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.
+          </p>
+          <CodeBlock>{`// Dev (MinIO in Docker):
 const s3 = new S3Client({
   endpoint:        "http://localhost:9000",   // ← the only line that changes
   forcePathStyle:  true,
@@ -622,45 +853,80 @@ const s3 = new S3Client({
   region:      "us-east-1",
   credentials: { accessKeyId: process.env.AWS_KEY, secretAccessKey: process.env.AWS_SECRET },
 });`}</CodeBlock>
-        <p>
-          The same swap works for Cloudflare R2, Backblaze B2, or any S3-compatible store. You are
-          coding against an open standard, not a proprietary SDK.
-        </p>
-      </ConceptCard>
+          <p>
+            The same swap works for Cloudflare R2, Backblaze B2, or any S3-compatible store. You are
+            coding against an open standard, not a proprietary SDK.
+          </p>
+        </ConceptCard>
 
-      {/* ── Good to know strip ── */}
-      <div style={s.gtkStrip}>
-        <span style={s.gtkHeader}>Good to know</span>
-        <GtkItem text="ETag = MD5 hash of the bytes — MinIO returns it on every object and you can use it as a cache fingerprint or deduplication key." />
-        <GtkItem text="Objects are immutable: you replace rather than edit. Lifecycle rules can auto-expire objects after N days to reclaim space." />
-        <GtkItem text="Versioning keeps every overwrite as a new version with its own version ID — deletes create a marker rather than destroying data." />
-        <GtkItem text="Bucket policies are JSON access rules. Buckets are private by default; presigned URLs grant temporary exceptions without making the bucket public." />
-      </div>
+        {/* ── Erasure coding concept card (new) ── */}
+        <ConceptCard id="concept-erasure" badge="05" title="Erasure Coding" tagline="Survive node failures without full copies" color="#ef4444">
+          <p>
+            Instead of copying the entire file to every node (which costs 4× the storage), MinIO uses
+            <strong> Reed-Solomon erasure coding</strong> to split each object into shards.
+            With a 4-node cluster and the default EC:2, every object becomes <strong>2 data shards + 2 parity shards</strong>.
+            Any 2 shards are enough to reconstruct the full object.
+          </p>
+          <CodeBlock>{`4-node cluster, EC:2 (default for 4 drives):
 
-      <div style={s.learnFooter}>
-        <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
-          All four concepts are active right now — the Gallery tab is talking to a live MinIO container via Docker.
-        </p>
+  Node 1  →  Data shard 1    (¼ of the object's data)
+  Node 2  →  Data shard 2    (¼ of the object's data)
+  Node 3  →  Parity shard 1  (mathematically derived from D1+D2)
+  Node 4  →  Parity shard 2  (mathematically derived from D1+D2)
+
+  Read  quorum: 2 nodes  — any 2 shards reconstruct the full object
+  Write quorum: 3 nodes  — need 3 online to commit a new write safely
+
+  Storage overhead: 2× (not 4× like full replication)
+  Failure tolerance: lose any 2 nodes — data survives`}</CodeBlock>
+          <p>
+            The parity shards are computed with XOR-based arithmetic (Reed-Solomon). If node 3 disappears,
+            MinIO can recompute parity shard 1 from data shards 1 and 2. If node 1 disappears, it
+            reconstructs data shard 1 from shard 2 and the parity shards.
+          </p>
+          <InfoBox>
+            Live demo: the node status panel at the top of the Gallery tab shows which nodes are online.
+            Run <code>docker compose stop minio3</code> in a terminal — the panel turns red for node 3
+            but the gallery still loads. Run <code>docker compose stop minio4</code> as well — two nodes
+            down, reads still work (read quorum = 2). Try uploading — it fails (write quorum = 3).
+            Run <code>docker compose start minio3</code> and uploads are restored.
+          </InfoBox>
+        </ConceptCard>
+
+        {/* ── Good to know strip ── */}
+        <div style={s.gtkStrip}>
+          <span style={s.gtkHeader}>Good to know</span>
+          <GtkItem text="ETag = MD5 hash of the bytes — MinIO returns it on every object and you can use it as a cache fingerprint or deduplication key." />
+          <GtkItem text="Objects are immutable: you replace rather than edit. Lifecycle rules can auto-expire objects after N days to reclaim space." />
+          <GtkItem text="Versioning keeps every overwrite as a new version with its own version ID — deletes create a marker rather than destroying data." />
+          <GtkItem text="Bucket policies are JSON access rules. Buckets are private by default; presigned URLs grant temporary exceptions without making the bucket public." />
+          <GtkItem text="Erasure coding runs automatically — no configuration needed beyond having 4+ drives. MinIO picks EC:2 for a 4-drive cluster by default." />
+        </div>
+
+        <div style={s.learnFooter}>
+          <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
+            All five concepts are active right now — the Gallery tab is talking to a live 4-node MinIO cluster via Docker.
+          </p>
+        </div>
       </div>
-    </div>
   );
 }
 
 /* ── Sub-components ── */
 function CoreIdea({ title, text }: { title: string; text: string }) {
   return (
-    <div style={s.coreIdea}>
-      <p style={s.coreIdeaTitle}>{title}</p>
-      <p style={s.coreIdeaText}>{text}</p>
-    </div>
+      <div style={s.coreIdea}>
+        <p style={s.coreIdeaTitle}>{title}</p>
+        <p style={s.coreIdeaText}>{text}</p>
+      </div>
   );
 }
 
 function GtkItem({ text }: { text: string }) {
   return (
-    <p style={s.gtkItem}>
-      <span style={s.gtkDot}>·</span>{text}
-    </p>
+      <p style={s.gtkItem}>
+        <span style={s.gtkDot}>·</span>{text}
+      </p>
   );
 }
 
@@ -670,22 +936,22 @@ function ConceptCard({ id, badge, title, tagline, color, exerciseBadge, children
   children: React.ReactNode;
 }) {
   return (
-    <div id={id} style={s.conceptCard} className="concept-card">
-      <div style={s.conceptHeader}>
-        <span style={{ ...s.conceptBadge, background: color + "22", color }}>{badge}</span>
-        <div style={{ flex: 1 }}>
-          <h2 style={s.conceptTitle}>{title}</h2>
-          <p style={{ ...s.conceptTagline, color }}>{tagline}</p>
-        </div>
-        {exerciseBadge && (
-          <div style={exerciseBadge.completed ? s.exBadgeDone : s.exBadgePending}>
-            {exerciseBadge.completed ? "✓ You implemented this" : "← Complete the exercise"}
+      <div id={id} style={s.conceptCard} className="concept-card">
+        <div style={s.conceptHeader}>
+          <span style={{ ...s.conceptBadge, background: color + "22", color }}>{badge}</span>
+          <div style={{ flex: 1 }}>
+            <h2 style={s.conceptTitle}>{title}</h2>
+            <p style={{ ...s.conceptTagline, color }}>{tagline}</p>
           </div>
-        )}
-        <div style={{ ...s.conceptAccent, background: color }} />
+          {exerciseBadge && (
+              <div style={exerciseBadge.completed ? s.exBadgeDone : s.exBadgePending}>
+                {exerciseBadge.completed ? "✓ You implemented this" : "← Complete the exercise"}
+              </div>
+          )}
+          <div style={{ ...s.conceptAccent, background: color }} />
+        </div>
+        <div style={s.conceptBody}>{children}</div>
       </div>
-      <div style={s.conceptBody}>{children}</div>
-    </div>
   );
 }
 
@@ -695,10 +961,10 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
 
 function InfoBox({ children }: { children: React.ReactNode }) {
   return (
-    <div style={s.infoBox}>
-      <span style={s.infoBoxIcon}>💡</span>
-      <span style={{ fontSize: 13, color: "#1e40af", lineHeight: 1.6 }}>{children}</span>
-    </div>
+      <div style={s.infoBox}>
+        <span style={s.infoBoxIcon}>💡</span>
+        <span style={{ fontSize: 13, color: "#1e40af", lineHeight: 1.6 }}>{children}</span>
+      </div>
   );
 }
 
@@ -746,10 +1012,10 @@ const s: Record<string, React.CSSProperties> = {
 
   /* page layout */
   pageWrap: { maxWidth: 1080, margin: "0 auto", padding: "0 24px 40px" },
-  twoCol:   { display: "flex", gap: 24, paddingTop: 28, alignItems: "flex-start" },
+  twoCol:   { display: "flex", gap: 24, paddingTop: 20, alignItems: "flex-start" },
 
   /* insight ribbon */
-  ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, marginTop: 20, flexWrap: "wrap" as const },
+  ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
   ribbonLabel: { fontSize: 11, fontWeight: 600, color: "#0369a1", textTransform: "uppercase" as const, letterSpacing: ".5px", whiteSpace: "nowrap" as const },
   ribbonChip:  { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "#fff", border: "1px solid #bae6fd", borderRadius: 20, fontSize: 12, fontWeight: 500, color: "#0369a1", cursor: "pointer" },
   chipDot:     { width: 6, height: 6, borderRadius: "50%", background: "#22d3ee" },
@@ -833,17 +1099,50 @@ const s: Record<string, React.CSSProperties> = {
 
   /* modal */
   overlay:       { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24 },
-  modal:         { background: "#fff", borderRadius: 16, overflow: "hidden", maxWidth: 640, width: "100%", maxHeight: "85vh", overflowY: "auto" as const, position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.3)" },
+  modal:         { background: "#fff", borderRadius: 16, overflow: "hidden", maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto" as const, position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.3)" },
   modalClose:    { position: "absolute" as const, top: 14, right: 14, background: "rgba(0,0,0,.4)", border: "none", color: "#fff", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 },
-  modalImgWrap:  { background: "#0f172a", maxHeight: 340, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  modalImg:      { maxWidth: "100%", maxHeight: 340, objectFit: "contain", display: "block" },
+  modalImgWrap:  { background: "#0f172a", maxHeight: 300, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  modalImg:      { maxWidth: "100%", maxHeight: 300, objectFit: "contain", display: "block" },
   modalInfo:     { padding: "20px 24px" },
   modalFilename: { fontSize: 16, fontWeight: 600, color: "#0f172a", marginBottom: 16 },
   modalMeta:     { display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 20 },
   metaRow:       { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "8px 0", borderBottom: "1px solid #f1f5f9" },
   metaLabel:     { fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".4px", whiteSpace: "nowrap" as const },
   metaValue:     { fontSize: 13, color: "#334155", textAlign: "right" as const, wordBreak: "break-all" as const },
-  deleteBtn:     { width: "100%", padding: "10px 0", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  deleteBtn:     { width: "100%", padding: "10px 0", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, marginTop: 16 },
+
+  /* shard distribution (inside modal) */
+  shardSection: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "14px 16px", marginBottom: 16 },
+  shardTitle:   { fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 10 },
+  shardGrid:    { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10 },
+  shardCard:    { borderRadius: 8, border: "1px solid", padding: "8px 6px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 4, transition: "all .4s" },
+  shardLabel:   { fontSize: 13, fontWeight: 800, fontFamily: "monospace", transition: "color .4s" },
+  shardNodeId:  { fontSize: 10, color: "#64748b" },
+  shardRole:    { fontSize: 10, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: ".04em", transition: "color .4s" },
+  shardStatus:  { fontSize: 14, lineHeight: 1, transition: "color .4s" },
+  shardNote:    { fontSize: 11, color: "#64748b", lineHeight: 1.5, margin: 0 },
+
+  /* erasure coding panel */
+  ecPanel:         { background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "16px 20px", display: "flex", flexDirection: "column" as const, gap: 12 },
+  ecPanelHeader:   { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  ecTitle:         { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
+  ecTitleText:     { fontSize: 13, fontWeight: 700, color: "#0f172a" },
+  ecFormula:       { fontSize: 12, fontWeight: 700, fontFamily: "monospace", background: "#0f172a", color: "#22d3ee", padding: "2px 9px", borderRadius: 6 },
+  ecFormulaNote:   { fontSize: 11, color: "#94a3b8" },
+  ecLearnBtn:      { background: "none", border: "1px solid #e2e8f0", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: "#64748b", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" as const },
+  ecNodeRow:       { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 },
+  ecNodeCard:      { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 8px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 5 },
+  ecNodeIndicator: { width: 10, height: 10, borderRadius: "50%", transition: "background .4s, box-shadow .4s" },
+  ecNodeId:        { fontSize: 11, fontWeight: 600, color: "#0f172a" },
+  ecShardBadge:    { fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 4, border: "1px solid", transition: "all .4s" },
+  ecNodeStatus:    { fontSize: 10, fontWeight: 600, transition: "color .4s" },
+  ecStatusBar:     { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: "1px solid", transition: "all .4s", flexWrap: "wrap" as const },
+  ecStatusDot:     { width: 8, height: 8, borderRadius: "50%", flexShrink: 0, transition: "all .4s" },
+  ecStatusMsg:     { fontSize: 12, fontWeight: 600, flex: 1, transition: "color .4s" },
+  ecQuorumBadges:  { display: "flex", gap: 6 },
+  ecQuorumBadge:   { fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99 },
+  ecHint:          { fontSize: 11, color: "#94a3b8", margin: 0, lineHeight: 1.6 },
+  ecHintCode:      { background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: 11, color: "#0f172a" },
 
   /* learn page */
   learnWrap:     { maxWidth: 760, margin: "0 auto", padding: "40px 24px 60px" },
@@ -868,7 +1167,7 @@ const s: Record<string, React.CSSProperties> = {
   conceptTagline: { fontSize: 12, fontWeight: 500, marginTop: 1 },
   conceptBody:    { padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 12 },
 
-  /* exercise badge (on concept card) */
+  /* exercise badge */
   exBadgePending: { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#f1f5f9", color: "#94a3b8", whiteSpace: "nowrap" as const, flexShrink: 0 },
   exBadgeDone:    { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#dcfce7", color: "#166534", whiteSpace: "nowrap" as const, flexShrink: 0 },
 

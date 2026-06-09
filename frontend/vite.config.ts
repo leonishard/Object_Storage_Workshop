@@ -11,6 +11,7 @@ export default defineConfig({
       "/gallery":        "http://localhost:3001",
       "/presign-upload": "http://localhost:3001",
       "/objects":        "http://localhost:3001",
+      "/nodes":          "http://localhost:3001",   // ← added: erasure coding node health
 
       // MinIO direct-upload proxy — forwards browser PUT requests to MinIO,
       // bypassing the CORS restriction that blocks cross-origin requests from :5173 to :9000.
