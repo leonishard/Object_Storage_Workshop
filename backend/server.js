@@ -116,7 +116,7 @@ app.get("/gallery", async (req, res) => {
         const url = await getSignedUrl(
             s3,
             new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
-            { expiresIn: 3600 }
+            { expiresIn: 10 }
         );
         return {
           key:          obj.Key,

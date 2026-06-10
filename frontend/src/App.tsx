@@ -638,18 +638,19 @@ function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; col
 function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpenConcept: (id: ConceptId) => void }) {
   const [expanded,    setExpanded]    = useState(false);
   const [copied,      setCopied]      = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(EXPIRY_SECONDS);
   const parsed = parsePresignedUrl(item.url);
+  const actualExpiry = parsed ? parseInt(parsed.expiry) || 3600 : 3600;
+  const [secondsLeft, setSecondsLeft] = useState(actualExpiry);
 
   useEffect(() => {
-    setSecondsLeft(EXPIRY_SECONDS);
+    setSecondsLeft(actualExpiry);
     const t = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
     return () => clearInterval(t);
   }, [item.url]);
 
   function copy() { navigator.clipboard.writeText(item.url); setCopied(true); setTimeout(() => setCopied(false), 2000); }
 
-  const pct   = secondsLeft / EXPIRY_SECONDS;
+  const pct   = secondsLeft / actualExpiry;
   const mins  = Math.floor(secondsLeft / 60);
   const secs  = secondsLeft % 60;
   const color = pct > 0.5 ? "#4ADE80" : pct > 0.2 ? "#f97316" : "#ef4444";
@@ -669,7 +670,7 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
           <span style={{ ...s.psuTimer, color }}>{secondsLeft > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : "Expired"}</span>
         </div>
         <p style={s.psuExpiryNote}>
-          Signed GET URL — expires in 1 hour. After that, anyone with the link gets a 403.
+           Signed GET URL — expires in {actualExpiry}s. Copy the link, open in a new tab, wait and refresh to see the 403.
           <button style={s.psuLearnLink} onClick={() => onOpenConcept("presigned-url")}>Learn why ↗</button>
         </p>
         {expanded && parsed && (
