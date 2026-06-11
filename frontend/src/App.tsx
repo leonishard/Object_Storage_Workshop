@@ -3,6 +3,19 @@ import { useState, useEffect, useRef } from "react";
 /* ─── helpers ────────────────────────────────────────────── */
 const EXPIRY_SECONDS = 3600;
 
+async function downloadImage(url: string, filename: string) {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
+
 function parsePresignedUrl(url: string) {
   try {
     const u     = new URL(url);
@@ -463,9 +476,14 @@ function GalleryPage({
                       </div>
                   )}
 
-                  <button style={s.deleteBtn} onClick={() => deleteObject(selected.key)} disabled={deleting}>
-                    {deleting ? "Deleting…" : "Delete object"}
-                  </button>
+                  <div style={s.modalActions}>
+                    <button style={s.downloadBtn} onClick={() => downloadImage(selected.url, selected.key.replace(/^\d+-/, ""))}>
+                      ↓ Download
+                    </button>
+                    <button style={s.deleteBtn} onClick={() => deleteObject(selected.key)} disabled={deleting}>
+                      {deleting ? "Deleting…" : "Delete object"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -639,7 +657,7 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
   const [expanded,    setExpanded]    = useState(false);
   const [copied,      setCopied]      = useState(false);
   const parsed = parsePresignedUrl(item.url);
-  const actualExpiry = parsed ? parseInt(parsed.expiry) || 3600 : 3600;
+  const actualExpiry = parsed ? parseInt(parsed.expiry) || EXPIRY_SECONDS : EXPIRY_SECONDS;
   const [secondsLeft, setSecondsLeft] = useState(actualExpiry);
 
   useEffect(() => {
@@ -663,6 +681,7 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
             <div style={s.psuFileName}>{item.key.replace(/^\d+-/, "")}</div>
             <div style={s.psuSubline}>{(item.size / 1024).toFixed(1)} KB · uploaded just now</div>
           </div>
+          <button style={s.psuDownloadBtn} title="Download" onClick={() => downloadImage(item.url, item.key.replace(/^\d+-/, ""))}>↓</button>
           <button style={s.psuExpandBtn} onClick={() => setExpanded((v) => !v)}>{expanded ? "▲" : "▼"}</button>
         </div>
         <div style={s.psuExpiryRow}>
@@ -1083,7 +1102,10 @@ const s: Record<string, React.CSSProperties> = {
   metaRow:       { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "8px 0", borderBottom: "1px solid #21262D" },
   metaLabel:     { fontSize: 11, fontWeight: 600, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".4px", whiteSpace: "nowrap" as const },
   metaValue:     { fontSize: 13, color: "#C6C7C7", textAlign: "right" as const, wordBreak: "break-all" as const },
-  deleteBtn:     { width: "100%", padding: "10px 0", background: "#3d0a0a", color: "#ef4444", border: "1px solid #ef444444", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, marginTop: 16 },
+  modalActions:  { display: "flex", flexDirection: "column" as const, gap: 8, marginTop: 16 },
+  downloadBtn:   { width: "100%", padding: "10px 0", background: "#166534", color: "#4ADE80", border: "1px solid #4ADE8044", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  deleteBtn:     { width: "100%", padding: "10px 0", background: "#3d0a0a", color: "#ef4444", border: "1px solid #ef444444", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  psuDownloadBtn:{ background: "#166534", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#4ADE80", padding: "4px 8px", borderRadius: 6, flexShrink: 0 },
 
   /* shard distribution */
   shardSection: { background: "#0D1117", border: "1px solid #3D444D", borderRadius: 10, padding: "14px 16px", marginBottom: 16 },
