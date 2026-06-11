@@ -108,6 +108,7 @@ app.get("/presign-upload", async (req, res) => {
 
 // GET /gallery — list objects and return presigned GET URLs
 app.get("/gallery", async (req, res) => {
+  const expiresIn = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
   const list    = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }));
   const objects = list.Contents ?? [];
 
@@ -116,7 +117,7 @@ app.get("/gallery", async (req, res) => {
         const url = await getSignedUrl(
             s3,
             new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
-            { expiresIn: 10 }
+            { expiresIn }
         );
         return {
           key:          obj.Key,

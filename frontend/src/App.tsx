@@ -1,21 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
 /* ─── helpers ────────────────────────────────────────────── */
-const EXPIRY_SECONDS = 3600;
-
-async function downloadImage(url: string, filename: string) {
-  const res = await fetch(url);
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(objectUrl);
-}
-
 function parsePresignedUrl(url: string) {
   try {
     const u     = new URL(url);
@@ -145,19 +130,19 @@ function GalleryPage({
   onExerciseComplete: () => void;
   exerciseCompleted:  boolean;
 }) {
-  const [gallery,     setGallery]     = useState<GalleryItem[]>([]);
-  const [uploading,   setUploading]   = useState(false);
-  const [status,      setStatus]      = useState<{ ok: boolean; text: string } | null>(null);
-  const [lastUpload,  setLastUpload]  = useState<GalleryItem | null>(null);
-  const [dragOver,    setDragOver]    = useState(false);
-  const [selected,    setSelected]    = useState<GalleryItem | null>(null);
-  const [insights,    setInsights]    = useState<InsightEvent[]>([]);
-  const [deleting,    setDeleting]    = useState(false);
-  const [uploadMode,  setUploadMode]  = useState<"server" | "direct">("server");
-  const [directInfo,  setDirectInfo]  = useState<{ url: string; key: string; file: File } | null>(null);
-  const [directReady, setDirectReady] = useState(false);
-
-  const [cluster, setCluster] = useState<ClusterHealth | null>(null);
+  const [gallery,       setGallery]       = useState<GalleryItem[]>([]);
+  const [uploading,     setUploading]     = useState(false);
+  const [status,        setStatus]        = useState<{ ok: boolean; text: string } | null>(null);
+  const [lastUpload,    setLastUpload]    = useState<GalleryItem | null>(null);
+  const [dragOver,      setDragOver]      = useState(false);
+  const [selected,      setSelected]      = useState<GalleryItem | null>(null);
+  const [insights,      setInsights]      = useState<InsightEvent[]>([]);
+  const [deleting,      setDeleting]      = useState(false);
+  const [uploadMode,    setUploadMode]    = useState<"server" | "direct">("server");
+  const [directInfo,    setDirectInfo]    = useState<{ url: string; key: string; file: File } | null>(null);
+  const [directReady,   setDirectReady]   = useState(false);
+  const [expirySeconds, setExpirySeconds] = useState(30);
+  const [cluster,       setCluster]       = useState<ClusterHealth | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -167,7 +152,6 @@ function GalleryPage({
 
   useEffect(() => {
     let cancelled = false;
-
     async function pollNodes() {
       try {
         const r = await fetch("/nodes");
@@ -175,28 +159,23 @@ function GalleryPage({
         const data: ClusterHealth = await r.json();
         setCluster(data);
         if (data.upCount < 4) {
-          pushInsight({
-            conceptId: "erasure-coding",
-            label:     "Erasure coding active",
-            detail:    `${data.upCount}/4 nodes online — cluster still serving data via EC.`,
-          });
+          pushInsight({ conceptId: "erasure-coding", label: "Erasure coding active", detail: `${data.upCount}/4 nodes online — cluster still serving data via EC.` });
         }
-      } catch { /* backend not ready yet — silent */ }
+      } catch { /* backend not ready yet */ }
     }
-
     pollNodes();
     const id = setInterval(pollNodes, 2000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  async function fetchGallery() {
-    const res  = await fetch("/gallery");
+  async function fetchGallery(expiry = expirySeconds) {
+    const res  = await fetch(`/gallery?expiresIn=${expiry}`);
     const data: GalleryItem[] = await res.json();
     data.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
     setGallery(data);
     if (data.length > 0) {
-      pushInsight({ conceptId: "buckets",  label: "Bucket loaded",  detail: `${data.length} object(s) retrieved.` });
-      pushInsight({ conceptId: "s3-api",   label: "S3 API used",    detail: "ListObjectsV2 called via the S3-compatible MinIO endpoint." });
+      pushInsight({ conceptId: "buckets", label: "Bucket loaded", detail: `${data.length} object(s) retrieved.` });
+      pushInsight({ conceptId: "s3-api",  label: "S3 API used",   detail: "ListObjectsV2 called via the S3-compatible MinIO endpoint." });
     }
     return data;
   }
@@ -225,10 +204,7 @@ function GalleryPage({
     setStatus(null); setLastUpload(null); setDirectReady(false);
     const res  = await fetch(`/presign-upload?filename=${encodeURIComponent(file.name)}&contentType=${encodeURIComponent(file.type)}`);
     const data = await res.json();
-    if (!res.ok) {
-      setStatus({ ok: false, text: data.error ?? "Failed to get upload URL" });
-      return;
-    }
+    if (!res.ok) { setStatus({ ok: false, text: data.error ?? "Failed to get upload URL" }); return; }
     setDirectInfo({ url: data.url, key: data.key, file });
     setDirectReady(true);
     pushInsight({ conceptId: "direct-upload", label: "Presigned PUT issued", detail: "Backend signed a PUT URL. File goes straight from browser to MinIO." });
@@ -238,11 +214,7 @@ function GalleryPage({
     if (!directInfo) return;
     setUploading(true);
     const putUrl = directInfo.url.replace("http://localhost:9000", "/minio-direct");
-    const res = await fetch(putUrl, {
-      method:  "PUT",
-      body:    directInfo.file,
-      headers: { "Content-Type": directInfo.file.type },
-    });
+    const res = await fetch(putUrl, { method: "PUT", body: directInfo.file, headers: { "Content-Type": directInfo.file.type } });
     setUploading(false);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -296,17 +268,14 @@ function GalleryPage({
         )}
 
         <div style={s.twoCol}>
+          {/* ── Sidebar ── */}
           <aside style={s.sidebar}>
 
             <div style={s.modeToggle}>
-              <button
-                  style={{ ...s.modeBtn, ...(uploadMode === "server" ? s.modeBtnActive : {}) }}
-                  onClick={() => { setUploadMode("server"); setDirectInfo(null); setDirectReady(false); }}
-              >Via Server</button>
-              <button
-                  style={{ ...s.modeBtn, ...(uploadMode === "direct" ? s.modeBtnActive : {}) }}
-                  onClick={() => { setUploadMode("direct"); setDirectInfo(null); setDirectReady(false); }}
-              >Direct to MinIO</button>
+              <button style={{ ...s.modeBtn, ...(uploadMode === "server" ? s.modeBtnActive : {}) }}
+                      onClick={() => { setUploadMode("server"); setDirectInfo(null); setDirectReady(false); }}>Via Server</button>
+              <button style={{ ...s.modeBtn, ...(uploadMode === "direct" ? s.modeBtnActive : {}) }}
+                      onClick={() => { setUploadMode("direct"); setDirectInfo(null); setDirectReady(false); }}>Direct to MinIO</button>
             </div>
 
             <div
@@ -347,12 +316,12 @@ function GalleryPage({
                   <textarea readOnly value={directInfo.url} style={s.directUrlBox} rows={3}
                             onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
                   <div style={s.flowDiagram}>
-                    <FlowRow label="Browser" note="your tab"   color="#166534" />
+                    <FlowRow label="Browser" note="your tab"  color="#166534" />
                     <FlowArrow label="GET /presign-upload" sub="got the URL ✓" />
-                    <FlowRow label="Backend" note="Express"    color="#4ADE80" />
+                    <FlowRow label="Backend" note="Express"   color="#4ADE80" />
                     <FlowArrow label="— no file bytes —" sub="backend is done" dim />
                     <FlowArrow label="PUT {signed URL}" sub="step 2 →" color="#4ADE80" />
-                    <FlowRow label="MinIO"   note=":9000"      color="#4ADE80" />
+                    <FlowRow label="MinIO"   note=":9000"     color="#4ADE80" />
                   </div>
                 </div>
             )}
@@ -392,11 +361,25 @@ function GalleryPage({
             </div>
           </aside>
 
+          {/* ── Gallery ── */}
           <main style={s.galleryArea}>
             <div style={s.galleryTopBar}>
               <h2 style={s.sectionTitle}>Gallery</h2>
-              <button onClick={fetchGallery} style={s.refreshBtn}>↻</button>
+              <div style={s.galleryControls}>
+                <span style={s.sliderLabel}>URL expiry:</span>
+                <input
+                    type="range"
+                    min={5}
+                    max={1200}
+                    value={expirySeconds}
+                    onChange={(e) => setExpirySeconds(parseInt(e.target.value))}
+                    style={{ width: 100, accentColor: "#4ADE80", cursor: "pointer" }}
+                />
+                <span style={s.sliderValue}>{expirySeconds}s</span>
+                <button onClick={() => fetchGallery(expirySeconds)} style={s.refreshBtn}>↻</button>
+              </div>
             </div>
+
             {gallery.length === 0 ? (
                 <div style={s.empty}>
                   <p style={{ fontSize: 48, margin: "0 0 12px" }}>🗄️</p>
@@ -408,6 +391,12 @@ function GalleryPage({
                       <div key={item.key} style={s.tile} onClick={() => setSelected(item)} className="gallery-tile">
                         <div style={s.imgWrap}>
                           <img src={item.url} alt={item.key} style={s.img} loading="lazy" />
+                          <button
+                              className="tile-open-btn"
+                              style={s.tileOpenBtn}
+                              title="Open in new tab"
+                              onClick={(e) => { e.stopPropagation(); window.open(item.url, "_blank"); }}
+                          >↗</button>
                         </div>
                         <div style={s.tileCaption}>
                           <span style={s.tileFilename}>{item.key.replace(/^\d+-/, "")}</span>
@@ -420,6 +409,7 @@ function GalleryPage({
           </main>
         </div>
 
+        {/* ── Detail modal ── */}
         {selected && (
             <div style={s.overlay} onClick={() => setSelected(null)}>
               <div style={s.modal} onClick={(e) => e.stopPropagation()}>
@@ -433,7 +423,7 @@ function GalleryPage({
                     <MetaRow label="Object key"    value={selected.key} mono />
                     <MetaRow label="Size"          value={`${(selected.size / 1024).toFixed(2)} KB`} />
                     <MetaRow label="Last modified" value={new Date(selected.lastModified).toLocaleString()} />
-                    {selected.etag && <MetaRow label="ETag (MD5)"  value={selected.etag} mono />}
+                    {selected.etag && <MetaRow label="ETag (MD5)" value={selected.etag} mono />}
                     {selected.metadata && Object.entries(selected.metadata).map(([k, v]) => <MetaRow key={k} label={k} value={v} />)}
                   </div>
 
@@ -448,19 +438,11 @@ function GalleryPage({
                             const label    = isData ? `D${i + 1}` : `P${i - cluster.ec.data + 1}`;
                             const roleText = isData ? "data" : "parity";
                             return (
-                                <div key={node.id} style={{
-                                  ...s.shardCard,
-                                  opacity:     isUp ? 1 : 0.45,
-                                  borderColor: isUp ? color + "55" : "#21262D",
-                                  background:  isUp ? color + "11" : "#2a3039",
-                                }}>
+                                <div key={node.id} style={{ ...s.shardCard, opacity: isUp ? 1 : 0.45, borderColor: isUp ? color + "55" : "#21262D", background: isUp ? color + "11" : "#2a3039" }}>
                                   <div style={{ ...s.shardLabel, color: isUp ? color : "#6E7681" }}>{label}</div>
                                   <div style={s.shardNodeId}>Node {node.id}</div>
                                   <div style={{ ...s.shardRole, color: isUp ? color : "#6E7681" }}>{roleText}</div>
-                                  <div style={{
-                                    ...s.shardStatus,
-                                    color: isUp ? "#4ADE80" : "#ef4444",
-                                  }}>{isUp ? "●" : "✕"}</div>
+                                  <div style={{ ...s.shardStatus, color: isUp ? "#4ADE80" : "#ef4444" }}>{isUp ? "●" : "✕"}</div>
                                 </div>
                             );
                           })}
@@ -477,9 +459,7 @@ function GalleryPage({
                   )}
 
                   <div style={s.modalActions}>
-                    <button style={s.downloadBtn} onClick={() => downloadImage(selected.url, selected.key.replace(/^\d+-/, ""))}>
-                      ↓ Download
-                    </button>
+                    <button style={s.openBtn} onClick={() => window.open(selected.url, "_blank")}>↗ Open in new tab</button>
                     <button style={s.deleteBtn} onClick={() => deleteObject(selected.key)} disabled={deleting}>
                       {deleting ? "Deleting…" : "Delete object"}
                     </button>
@@ -495,13 +475,7 @@ function GalleryPage({
 /* ═══════════════════════════════════════════════════════════
    NODE STATUS PANEL
 ═══════════════════════════════════════════════════════════ */
-function NodeStatusPanel({
-                           cluster,
-                           onOpenConcept,
-                         }: {
-  cluster:       ClusterHealth | null;
-  onOpenConcept: (id: ConceptId) => void;
-}) {
+function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | null; onOpenConcept: (id: ConceptId) => void }) {
   if (!cluster) {
     return (
         <div style={{ ...s.ecPanel, opacity: 0.5 }}>
@@ -537,8 +511,7 @@ function NodeStatusPanel({
   const statusColor =
       upCount === 4 ? "#4ADE80" :
           upCount === 3 ? "#f97316" :
-              upCount === 2 ? "#f97316" :
-                  "#ef4444";
+              upCount === 2 ? "#f97316" : "#ef4444";
 
   const shardMeta = [
     { label: "D1", color: "#166534", title: "Data shard 1"   },
@@ -555,9 +528,7 @@ function NodeStatusPanel({
             <span style={s.ecFormula}>EC: {ec.data}+{ec.parity}</span>
             <span style={s.ecFormulaNote}>{ec.data} data · {ec.parity} parity · {ec.total} nodes</span>
           </div>
-          <button style={s.ecLearnBtn} onClick={() => onOpenConcept("erasure-coding")}>
-            How it works ↗
-          </button>
+          <button style={s.ecLearnBtn} onClick={() => onOpenConcept("erasure-coding")}>How it works ↗</button>
         </div>
 
         <div style={s.ecNodeRow}>
@@ -566,57 +537,23 @@ function NodeStatusPanel({
             const isUp = node.status === "up";
             return (
                 <div key={node.id} style={s.ecNodeCard}>
-                  <div style={{
-                    ...s.ecNodeIndicator,
-                    background: isUp ? "#4ADE80" : "#ef4444",
-                    boxShadow:  isUp ? "0 0 8px #4ADE8055" : "0 0 8px #ef444455",
-                  }} />
+                  <div style={{ ...s.ecNodeIndicator, background: isUp ? "#4ADE80" : "#ef4444", boxShadow: isUp ? "0 0 8px #4ADE8055" : "0 0 8px #ef444455" }} />
                   <div style={s.ecNodeId}>Node {node.id}</div>
-                  <div
-                      title={meta.title}
-                      style={{
-                        ...s.ecShardBadge,
-                        background:  isUp ? meta.color + "22" : "#2a3039",
-                        color:       isUp ? meta.color        : "#6E7681",
-                        borderColor: isUp ? meta.color + "55" : "#21262D",
-                      }}
-                  >
+                  <div title={meta.title} style={{ ...s.ecShardBadge, background: isUp ? meta.color + "22" : "#2a3039", color: isUp ? meta.color : "#6E7681", borderColor: isUp ? meta.color + "55" : "#21262D" }}>
                     {meta.label}
                   </div>
-                  <div style={{ ...s.ecNodeStatus, color: isUp ? "#4ADE80" : "#ef4444" }}>
-                    {isUp ? "online" : "offline"}
-                  </div>
+                  <div style={{ ...s.ecNodeStatus, color: isUp ? "#4ADE80" : "#ef4444" }}>{isUp ? "online" : "offline"}</div>
                 </div>
             );
           })}
         </div>
 
-        <div style={{
-          ...s.ecStatusBar,
-          borderColor: statusColor + "44",
-          background:  statusColor + "11",
-        }}>
-          <div style={{
-            ...s.ecStatusDot,
-            background: statusColor,
-            boxShadow:  `0 0 6px ${statusColor}66`,
-          }} />
+        <div style={{ ...s.ecStatusBar, borderColor: statusColor + "44", background: statusColor + "11" }}>
+          <div style={{ ...s.ecStatusDot, background: statusColor, boxShadow: `0 0 6px ${statusColor}66` }} />
           <span style={{ ...s.ecStatusMsg, color: statusColor }}>{statusMsg}</span>
           <div style={s.ecQuorumBadges}>
-          <span style={{
-            ...s.ecQuorumBadge,
-            background: canRead  ? "#166534" : "#3d0a0a",
-            color:      canRead  ? "#4ADE80"  : "#ef4444",
-          }}>
-            Read {canRead ? "✓" : "✗"}
-          </span>
-            <span style={{
-              ...s.ecQuorumBadge,
-              background: canWrite ? "#166534" : "#3d0a0a",
-              color:      canWrite ? "#4ADE80"  : "#ef4444",
-            }}>
-            Write {canWrite ? "✓" : "✗"}
-          </span>
+            <span style={{ ...s.ecQuorumBadge, background: canRead  ? "#166534" : "#3d0a0a", color: canRead  ? "#4ADE80" : "#ef4444" }}>Read {canRead   ? "✓" : "✗"}</span>
+            <span style={{ ...s.ecQuorumBadge, background: canWrite ? "#166534" : "#3d0a0a", color: canWrite ? "#4ADE80" : "#ef4444" }}>Write {canWrite ? "✓" : "✗"}</span>
           </div>
         </div>
 
@@ -637,6 +574,7 @@ function FlowRow({ label, note, color }: { label: string; note: string; color: s
       </div>
   );
 }
+
 function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; color?: string; dim?: boolean }) {
   return (
       <div style={{ paddingLeft: 5, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -654,10 +592,10 @@ function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; col
 
 /* ── Presigned URL Reveal ── */
 function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpenConcept: (id: ConceptId) => void }) {
-  const [expanded,    setExpanded]    = useState(false);
-  const [copied,      setCopied]      = useState(false);
-  const parsed = parsePresignedUrl(item.url);
-  const actualExpiry = parsed ? parseInt(parsed.expiry) || EXPIRY_SECONDS : EXPIRY_SECONDS;
+  const [expanded, setExpanded] = useState(false);
+  const [copied,   setCopied]   = useState(false);
+  const parsed       = parsePresignedUrl(item.url);
+  const actualExpiry = parsed ? parseInt(parsed.expiry) || 30 : 30;
   const [secondsLeft, setSecondsLeft] = useState(actualExpiry);
 
   useEffect(() => {
@@ -681,7 +619,7 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
             <div style={s.psuFileName}>{item.key.replace(/^\d+-/, "")}</div>
             <div style={s.psuSubline}>{(item.size / 1024).toFixed(1)} KB · uploaded just now</div>
           </div>
-          <button style={s.psuDownloadBtn} title="Download" onClick={() => downloadImage(item.url, item.key.replace(/^\d+-/, ""))}>↓</button>
+          <button style={s.psuOpenBtn} title="Open in new tab" onClick={() => window.open(item.url, "_blank")}>↗</button>
           <button style={s.psuExpandBtn} onClick={() => setExpanded((v) => !v)}>{expanded ? "▲" : "▼"}</button>
         </div>
         <div style={s.psuExpiryRow}>
@@ -689,17 +627,17 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
           <span style={{ ...s.psuTimer, color }}>{secondsLeft > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : "Expired"}</span>
         </div>
         <p style={s.psuExpiryNote}>
-           Signed GET URL — expires in {actualExpiry}s. Copy the link, open in a new tab, wait and refresh to see the 403.
+          Signed GET URL — expires in {actualExpiry}s. Open in a new tab, wait, then refresh to see the 403.
           <button style={s.psuLearnLink} onClick={() => onOpenConcept("presigned-url")}>Learn why ↗</button>
         </p>
         {expanded && parsed && (
             <div style={s.psuBreakdown}>
               <p style={s.psuBreakdownTitle}>URL breakdown</p>
-              <UrlPart color="#166534" label="Host"            value={parsed.host}                    note="MinIO's endpoint. In production: your S3 domain or CDN." />
+              <UrlPart color="#166534" label="Host"            value={parsed.host}                       note="MinIO's endpoint. In production: your S3 domain or CDN." />
               <UrlPart color="#4ADE80" label="Bucket / Key"    value={`/${parsed.bucket}/${parsed.key}`} note="Bucket name + object key." />
-              <UrlPart color="#f97316" label="X-Amz-Date"      value={parsed.date}                    note="When the signature was generated — baked in so it can't be reused." />
-              <UrlPart color="#ef4444" label="X-Amz-Expires"   value={`${parsed.expiry}s`}            note="How long until the URL stops working. Tamper with this and the signature breaks." />
-              <UrlPart color="#4ADE80" label="X-Amz-Signature" value={parsed.sig}                     note="HMAC-SHA256 of the URL + expiry + your secret key. Change anything above and this won't match." />
+              <UrlPart color="#f97316" label="X-Amz-Date"      value={parsed.date}                       note="When the signature was generated — baked in so it can't be reused." />
+              <UrlPart color="#ef4444" label="X-Amz-Expires"   value={`${parsed.expiry}s`}               note="How long until the URL stops working. Tamper with this and the signature breaks." />
+              <UrlPart color="#4ADE80" label="X-Amz-Signature" value={parsed.sig}                        note="HMAC-SHA256 of the URL + expiry + your secret key. Change anything above and this won't match." />
               <div style={s.psuRawWrap}>
                 <textarea readOnly value={item.url} style={s.psuRawBox} rows={3} onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
                 <button style={s.psuCopyBtn} onClick={copy}>{copied ? "✓ Copied" : "Copy"}</button>
@@ -745,31 +683,15 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
         <div style={s.coreBlock}>
           <p style={s.coreBlockLabel}>Core ideas</p>
           <div style={s.coreGrid}>
-            <CoreIdea
-                title="Objects are flat"
-                text="An object = bytes + a key + metadata, stored in a flat bucket. Keys look like paths but folders aren't real — the / is just part of the key string."
-            />
-            <CoreIdea
-                title="Storage ≠ database"
-                text="Store the blob in object storage, store a pointer (the key) plus searchable fields in your database. Object storage isn't a database."
-            />
-            <CoreIdea
-                title="Code against the API, not the vendor"
-                text="The same SDK code runs on MinIO, AWS S3, Cloudflare R2, or Backblaze B2 — you change one config line, not your code."
-            />
+            <CoreIdea title="Objects are flat"             text="An object = bytes + a key + metadata, stored in a flat bucket. Keys look like paths but folders aren't real — the / is just part of the key string." />
+            <CoreIdea title="Storage ≠ database"           text="Store the blob in object storage, store a pointer (the key) plus searchable fields in your database. Object storage isn't a database." />
+            <CoreIdea title="Code against the API, not the vendor" text="The same SDK code runs on MinIO, AWS S3, Cloudflare R2, or Backblaze B2 — you change one config line, not your code." />
           </div>
         </div>
 
         <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#166534">
-          <p>
-            A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things:
-            bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are
-            just two strings that share a prefix.
-          </p>
-          <p>
-            The "folder" the MinIO console draws for <code>2024/</code> is invented by the UI. ListObjectsV2 lets you
-            filter by prefix to simulate folders, but the storage layer is flat.
-          </p>
+          <p>A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things: bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are just two strings that share a prefix.</p>
+          <p>The "folder" the MinIO console draws for <code>2024/</code> is invented by the UI. ListObjectsV2 lets you filter by prefix to simulate folders, but the storage layer is flat.</p>
           <CodeBlock>{`// What the backend runs every time you open the Gallery tab:
 const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" }));
 // Each entry: { Key, Size, ETag, LastModified }
@@ -778,41 +700,22 @@ const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" 
         </ConceptCard>
 
         <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#4ADE80">
-          <p>
-            After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal
-            HTTPS URL with an HMAC-SHA256 signature baked into the query string — MinIO verifies it without
-            storing any session.
-          </p>
-          <p>
-            The browser loads images <strong>directly from MinIO</strong> — the Express server is not in the
-            transfer loop. Change one character in the URL and the signature check fails with a 403.
-          </p>
+          <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string — MinIO verifies it without storing any session.</p>
+          <p>The browser loads images <strong>directly from MinIO</strong> — the Express server is not in the transfer loop. Change one character in the URL and the signature check fails with a 403.</p>
           <CodeBlock>{`const url = await getSignedUrl(
   s3,
   new GetObjectCommand({ Bucket: BUCKET, Key: "1719000000-cat.jpg" }),
-  { expiresIn: 3600 }   // valid for 1 hour
+  { expiresIn: 30 }    // set via the slider in the Gallery tab
 );
 // → http://localhost:9000/workshop-images/1719000000-cat.jpg
-//     ?X-Amz-Expires=3600&X-Amz-Signature=a3f8b2…`}</CodeBlock>
+//     ?X-Amz-Expires=30&X-Amz-Signature=a3f8b2…`}</CodeBlock>
           <InfoBox>
-            Open DevTools → Network, then hit Refresh in the gallery. Image requests go to <code>:9000</code> (MinIO via nginx),
-            not <code>:3001</code> (Express). The countdown timer in the sidebar shows the URL expiring in real time.
+            Use the expiry slider in the Gallery tab to set a short window, upload an image, click ↗ to open it in a new tab — then wait for the timer to hit zero and refresh that tab to get a 403.
           </InfoBox>
         </ConceptCard>
 
-        <ConceptCard
-            id="concept-direct-upload"
-            badge="03"
-            title="Direct Upload — Presigned PUT"
-            tagline="Backend as keyholder, not middleman"
-            color="#f97316"
-            exerciseBadge={{ completed: exerciseCompleted }}
-        >
-          <p>
-            A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the
-            browser uploads straight to MinIO. The server never touches the file bytes — it only holds the
-            secret key and uses it to sign requests.
-          </p>
+        <ConceptCard id="concept-direct-upload" badge="03" title="Direct Upload — Presigned PUT" tagline="Backend as keyholder, not middleman" color="#f97316" exerciseBadge={{ completed: exerciseCompleted }}>
+          <p>A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the browser uploads straight to MinIO. The server never touches the file bytes — it only holds the secret key and uses it to sign requests.</p>
           <CodeBlock>{`// Via server (default tab):
 Browser ──POST /upload──▶ Backend ──PutObject──▶ MinIO
          (file bytes flow through Express)
@@ -820,22 +723,12 @@ Browser ──POST /upload──▶ Backend ──PutObject──▶ MinIO
 // Direct upload ("Direct to MinIO" tab):
 Browser ──GET /presign-upload──▶ Backend   ← only a tiny JSON response
 Browser ──PUT {signed URL}────────────────▶ MinIO   ← file bytes go here directly`}</CodeBlock>
-          <p>
-            The backend is the <strong>keyholder</strong>: it holds the MinIO credentials and uses them only
-            to sign URLs. The browser never sees a secret key — only a time-limited signed URL that MinIO will accept.
-          </p>
-          <InfoBox>
-            Switch to "Direct to MinIO" in the Gallery tab. When you pick a file, the app asks the backend
-            for a signed PUT URL and shows it in the flow diagram before you upload. The PUT goes straight
-            to <code>:9000</code>.
-          </InfoBox>
+          <p>The backend is the <strong>keyholder</strong>: it holds the MinIO credentials and uses them only to sign URLs. The browser never sees a secret key — only a time-limited signed URL that MinIO will accept.</p>
+          <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. When you pick a file, the app asks the backend for a signed PUT URL and shows it in the flow diagram before you upload. The PUT goes straight to <code>:9000</code>.</InfoBox>
         </ConceptCard>
 
         <ConceptCard id="concept-s3" badge="04" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#4ADE80">
-          <p>
-            Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API.
-            The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.
-          </p>
+          <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
           <CodeBlock>{`// Dev (MinIO in Docker):
 const s3 = new S3Client({
   endpoint:        "http://localhost:9000",   // ← the only line that changes
@@ -848,19 +741,11 @@ const s3 = new S3Client({
   region:      "us-east-1",
   credentials: { accessKeyId: process.env.AWS_KEY, secretAccessKey: process.env.AWS_SECRET },
 });`}</CodeBlock>
-          <p>
-            The same swap works for Cloudflare R2, Backblaze B2, or any S3-compatible store. You are
-            coding against an open standard, not a proprietary SDK.
-          </p>
+          <p>The same swap works for Cloudflare R2, Backblaze B2, or any S3-compatible store. You are coding against an open standard, not a proprietary SDK.</p>
         </ConceptCard>
 
         <ConceptCard id="concept-erasure" badge="05" title="Erasure Coding" tagline="Survive node failures without full copies" color="#ef4444">
-          <p>
-            Instead of copying the entire file to every node (which costs 4× the storage), MinIO uses
-            <strong> Reed-Solomon erasure coding</strong> to split each object into shards.
-            With a 4-node cluster and the default EC:2, every object becomes <strong>2 data shards + 2 parity shards</strong>.
-            Any 2 shards are enough to reconstruct the full object.
-          </p>
+          <p>Instead of copying the entire file to every node (which costs 4× the storage), MinIO uses <strong>Reed-Solomon erasure coding</strong> to split each object into shards. With a 4-node cluster and the default EC:2, every object becomes <strong>2 data shards + 2 parity shards</strong>. Any 2 shards are enough to reconstruct the full object.</p>
           <CodeBlock>{`4-node cluster, EC:2 (default for 4 drives):
 
   Node 1  →  Data shard 1    (¼ of the object's data)
@@ -873,17 +758,9 @@ const s3 = new S3Client({
 
   Storage overhead: 2× (not 4× like full replication)
   Failure tolerance: lose any 2 nodes — data survives`}</CodeBlock>
-          <p>
-            The parity shards are computed with XOR-based arithmetic (Reed-Solomon). If node 3 disappears,
-            MinIO can recompute parity shard 1 from data shards 1 and 2. If node 1 disappears, it
-            reconstructs data shard 1 from shard 2 and the parity shards.
-          </p>
+          <p>The parity shards are computed with XOR-based arithmetic (Reed-Solomon). If node 3 disappears, MinIO can recompute parity shard 1 from data shards 1 and 2.</p>
           <InfoBox>
-            Live demo: the node status panel at the top of the Gallery tab shows which nodes are online.
-            Run <code>docker compose stop minio3</code> in a terminal — the panel turns red for node 3
-            but the gallery still loads. Run <code>docker compose stop minio4</code> as well — two nodes
-            down, reads still work (read quorum = 2). Try uploading — it fails (write quorum = 3).
-            Run <code>docker compose start minio3</code> and uploads are restored.
+            Live demo: run <code>docker compose stop minio3</code> in a terminal — the panel turns orange but the gallery still loads. Run <code>docker compose stop minio4</code> as well — two nodes down, reads still work (read quorum = 2). Try uploading — it fails (write quorum = 3). Run <code>docker compose start minio3</code> and uploads are restored.
           </InfoBox>
         </ConceptCard>
 
@@ -977,6 +854,8 @@ const globalCss = `
 
   .gallery-tile { transition: transform .15s, box-shadow .15s; cursor: pointer; }
   .gallery-tile:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .tile-open-btn { opacity: 0; transition: opacity .15s; }
+  .gallery-tile:hover .tile-open-btn { opacity: 1; }
 
   .concept-card { animation: fadeIn .3s ease both; }
   .concept-highlight { animation: highlightPulse .6s ease 2; }
@@ -1008,7 +887,7 @@ const s: Record<string, React.CSSProperties> = {
   twoCol:   { display: "flex", gap: 24, paddingTop: 20, alignItems: "flex-start" },
 
   /* insight ribbon */
-  ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#166534" + "22", border: "1px solid #166534" + "55", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
+  ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#16653422", border: "1px solid #16653455", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
   ribbonLabel: { fontSize: 11, fontWeight: 600, color: "#4ADE80", textTransform: "uppercase" as const, letterSpacing: ".5px", whiteSpace: "nowrap" as const },
   ribbonChip:  { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "#2a3039", border: "1px solid #3D444D", borderRadius: 20, fontSize: 12, fontWeight: 500, color: "#4ADE80", cursor: "pointer" },
   chipDot:     { width: 6, height: 6, borderRadius: "50%", background: "#4ADE80" },
@@ -1024,14 +903,14 @@ const s: Record<string, React.CSSProperties> = {
   modeBtnActive: { background: "#0D1117", color: "#E4E5E5", boxShadow: "0 1px 3px rgba(0,0,0,.4)" },
 
   /* drop zone */
-  dropZone:       { border: "2px dashed #21262D", borderRadius: 14, padding: "40px 28px", textAlign: "center" as const, cursor: "pointer", background: "#2a3039", transition: "all .15s", minHeight: 160 },
-  dropZoneActive: { borderColor: "#166534", background: "#166534" + "11" },
-  dropIconWrap:   { display: "flex", justifyContent: "center", marginBottom: 14 },
-  dropText:       { fontSize: 14, color: "#8B949E", marginBottom: 6 },
-  dropSub:        { fontSize: 12, color: "#6E7681" },
-  spinnerWrap:    { display: "flex", justifyContent: "center", padding: "16px 0" },
-  spinner:        { width: 30, height: 30, border: "3px solid #21262D", borderTopColor: "#4ADE80", borderRadius: "50%", animation: "spin .7s linear infinite" },
-  uploadDirectBtn:{ padding: "10px 20px", background: "#166534", color: "#4ADE80", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 },
+  dropZone:        { border: "2px dashed #21262D", borderRadius: 14, padding: "40px 28px", textAlign: "center" as const, cursor: "pointer", background: "#2a3039", transition: "all .15s", minHeight: 160 },
+  dropZoneActive:  { borderColor: "#166534", background: "#16653411" },
+  dropIconWrap:    { display: "flex", justifyContent: "center", marginBottom: 14 },
+  dropText:        { fontSize: 14, color: "#8B949E", marginBottom: 6 },
+  dropSub:         { fontSize: 12, color: "#6E7681" },
+  spinnerWrap:     { display: "flex", justifyContent: "center", padding: "16px 0" },
+  spinner:         { width: 30, height: 30, border: "3px solid #21262D", borderTopColor: "#4ADE80", borderRadius: "50%", animation: "spin .7s linear infinite" },
+  uploadDirectBtn: { padding: "10px 20px", background: "#166534", color: "#4ADE80", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 },
 
   /* direct upload panel */
   directPanel:  { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column" as const, gap: 14 },
@@ -1055,6 +934,7 @@ const s: Record<string, React.CSSProperties> = {
   psuThumb:          { width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#0D1117" },
   psuFileName:       { fontSize: 12, fontWeight: 600, color: "#E4E5E5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
   psuSubline:        { fontSize: 11, color: "#6E7681", marginTop: 1 },
+  psuOpenBtn:        { background: "#166534", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#4ADE80", padding: "4px 8px", borderRadius: 6, flexShrink: 0 },
   psuExpandBtn:      { background: "none", border: "none", cursor: "pointer", fontSize: 10, color: "#6E7681", padding: "4px 6px", flexShrink: 0 },
   psuExpiryRow:      { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px 0" },
   psuBarWrap:        { flex: 1, height: 4, background: "#21262D", borderRadius: 4, overflow: "hidden" },
@@ -1078,34 +958,37 @@ const s: Record<string, React.CSSProperties> = {
   statKey: { fontSize: 11, color: "#6E7681" },
 
   /* gallery */
-  galleryArea:   { flex: 1, minWidth: 0 },
-  galleryTopBar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 0 },
-  refreshBtn:    { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 8, padding: "6px 12px", fontSize: 16, cursor: "pointer", color: "#8B949E", lineHeight: 1 },
-  empty:         { textAlign: "center" as const, padding: "60px 0" },
-  grid:          { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginTop: 4 },
-  tile:          { borderRadius: 10, overflow: "hidden", border: "1px solid #3D444D", background: "#2a3039" },
-  imgWrap:       { width: "100%", aspectRatio: "1/1", background: "#0D1117", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  img:           { width: "100%", height: "100%", objectFit: "cover", display: "block" },
-  tileCaption:   { padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 },
-  tileFilename:  { fontSize: 11, color: "#C6C7C7", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 },
-  tileMeta:      { fontSize: 11, color: "#6E7681", whiteSpace: "nowrap" as const, flexShrink: 0 },
+  galleryArea:     { flex: 1, minWidth: 0 },
+  galleryTopBar:   { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  galleryControls: { display: "flex", alignItems: "center", gap: 10 },
+  sliderLabel:     { fontSize: 11, color: "#8B949E", whiteSpace: "nowrap" as const },
+  sliderValue:     { fontSize: 11, fontFamily: "monospace", color: "#4ADE80", minWidth: 36, textAlign: "right" as const },
+  refreshBtn:      { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 8, padding: "6px 12px", fontSize: 16, cursor: "pointer", color: "#8B949E", lineHeight: 1 },
+  empty:           { textAlign: "center" as const, padding: "60px 0" },
+  grid:            { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 },
+  tile:            { borderRadius: 10, overflow: "hidden", border: "1px solid #3D444D", background: "#2a3039" },
+  imgWrap:         { width: "100%", aspectRatio: "1/1", background: "#0D1117", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative" as const },
+  img:             { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+  tileOpenBtn:     { position: "absolute" as const, top: 6, right: 6, background: "rgba(0,0,0,.65)", border: "none", color: "#4ADE80", borderRadius: 6, padding: "3px 7px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  tileCaption:     { padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 },
+  tileFilename:    { fontSize: 11, color: "#C6C7C7", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 },
+  tileMeta:        { fontSize: 11, color: "#6E7681", whiteSpace: "nowrap" as const, flexShrink: 0 },
 
   /* modal */
-  overlay:       { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24 },
-  modal:         { background: "#2a3039", borderRadius: 16, overflow: "hidden", maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto" as const, position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.6)", border: "1px solid #3D444D" },
-  modalClose:    { position: "absolute" as const, top: 14, right: 14, background: "rgba(0,0,0,.5)", border: "none", color: "#E4E5E5", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 },
-  modalImgWrap:  { background: "#0D1117", maxHeight: 300, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  modalImg:      { maxWidth: "100%", maxHeight: 300, objectFit: "contain", display: "block" },
-  modalInfo:     { padding: "20px 24px" },
-  modalFilename: { fontSize: 16, fontWeight: 600, color: "#E4E5E5", marginBottom: 16 },
-  modalMeta:     { display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 20 },
-  metaRow:       { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "8px 0", borderBottom: "1px solid #21262D" },
-  metaLabel:     { fontSize: 11, fontWeight: 600, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".4px", whiteSpace: "nowrap" as const },
-  metaValue:     { fontSize: 13, color: "#C6C7C7", textAlign: "right" as const, wordBreak: "break-all" as const },
-  modalActions:  { display: "flex", flexDirection: "column" as const, gap: 8, marginTop: 16 },
-  downloadBtn:   { width: "100%", padding: "10px 0", background: "#166534", color: "#4ADE80", border: "1px solid #4ADE8044", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-  deleteBtn:     { width: "100%", padding: "10px 0", background: "#3d0a0a", color: "#ef4444", border: "1px solid #ef444444", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-  psuDownloadBtn:{ background: "#166534", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#4ADE80", padding: "4px 8px", borderRadius: 6, flexShrink: 0 },
+  overlay:      { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24 },
+  modal:        { background: "#2a3039", borderRadius: 16, overflow: "hidden", maxWidth: 640, width: "100%", maxHeight: "90vh", overflowY: "auto" as const, position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.6)", border: "1px solid #3D444D" },
+  modalClose:   { position: "absolute" as const, top: 14, right: 14, background: "rgba(0,0,0,.5)", border: "none", color: "#E4E5E5", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 },
+  modalImgWrap: { background: "#0D1117", maxHeight: 300, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  modalImg:     { maxWidth: "100%", maxHeight: 300, objectFit: "contain", display: "block" },
+  modalInfo:    { padding: "20px 24px" },
+  modalFilename:{ fontSize: 16, fontWeight: 600, color: "#E4E5E5", marginBottom: 16 },
+  modalMeta:    { display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 20 },
+  metaRow:      { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "8px 0", borderBottom: "1px solid #21262D" },
+  metaLabel:    { fontSize: 11, fontWeight: 600, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".4px", whiteSpace: "nowrap" as const },
+  metaValue:    { fontSize: 13, color: "#C6C7C7", textAlign: "right" as const, wordBreak: "break-all" as const },
+  modalActions: { display: "flex", flexDirection: "column" as const, gap: 8, marginTop: 16 },
+  openBtn:      { width: "100%", padding: "10px 0", background: "#166534", color: "#4ADE80", border: "1px solid #4ADE8044", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  deleteBtn:    { width: "100%", padding: "10px 0", background: "#3d0a0a", color: "#ef4444", border: "1px solid #ef444444", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 
   /* shard distribution */
   shardSection: { background: "#0D1117", border: "1px solid #3D444D", borderRadius: 10, padding: "14px 16px", marginBottom: 16 },
@@ -1155,15 +1038,14 @@ const s: Record<string, React.CSSProperties> = {
   coreIdeaText:   { fontSize: 12, color: "#8B949E", lineHeight: 1.65, margin: 0 },
 
   /* concept cards */
-  conceptCard:    { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 16, marginBottom: 20, overflow: "hidden", scrollMarginTop: 80 },
-  conceptHeader:  { display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", borderBottom: "1px solid #21262D", position: "relative" as const, overflow: "hidden" },
-  conceptAccent:  { position: "absolute" as const, right: 0, top: 0, width: 4, height: "100%", opacity: 0.6 },
-  conceptBadge:   { fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 6, letterSpacing: ".5px", flexShrink: 0 },
-  conceptTitle:   { fontSize: 18, fontWeight: 700, color: "#E4E5E5", letterSpacing: "-0.3px" },
-  conceptTagline: { fontSize: 12, fontWeight: 500, marginTop: 1 },
-  conceptBody:    { padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 12 },
+  conceptCard:   { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 16, marginBottom: 20, overflow: "hidden", scrollMarginTop: 80 },
+  conceptHeader: { display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", borderBottom: "1px solid #21262D", position: "relative" as const, overflow: "hidden" },
+  conceptAccent: { position: "absolute" as const, right: 0, top: 0, width: 4, height: "100%", opacity: 0.6 },
+  conceptBadge:  { fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 6, letterSpacing: ".5px", flexShrink: 0 },
+  conceptTitle:  { fontSize: 18, fontWeight: 700, color: "#E4E5E5", letterSpacing: "-0.3px" },
+  conceptTagline:{ fontSize: 12, fontWeight: 500, marginTop: 1 },
+  conceptBody:   { padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 12 },
 
-  /* exercise badge */
   exBadgePending: { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#2a3039", color: "#6E7681", border: "1px solid #3D444D", whiteSpace: "nowrap" as const, flexShrink: 0 },
   exBadgeDone:    { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#166534", color: "#4ADE80", whiteSpace: "nowrap" as const, flexShrink: 0 },
 
@@ -1173,8 +1055,8 @@ const s: Record<string, React.CSSProperties> = {
   gtkItem:   { fontSize: 13, color: "#8B949E", lineHeight: 1.6, margin: 0, display: "flex", gap: 8 },
   gtkDot:    { color: "#21262D", flexShrink: 0, marginTop: 1 },
 
-  codeBlock:    { background: "#0D1117", color: "#C6C7C7", padding: "14px 16px", borderRadius: 8, overflowX: "auto" as const, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre" as const, border: "1px solid #3D444D" },
-  infoBox:      { display: "flex", gap: 10, alignItems: "flex-start", background: "#166534" + "22", border: "1px solid #166534" + "55", borderRadius: 8, padding: "12px 14px" },
-  infoBoxIcon:  { fontSize: 16, flexShrink: 0 },
-  learnFooter:  { textAlign: "center" as const, padding: "24px 0 0", borderTop: "1px solid #21262D" },
+  codeBlock:   { background: "#0D1117", color: "#C6C7C7", padding: "14px 16px", borderRadius: 8, overflowX: "auto" as const, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre" as const, border: "1px solid #3D444D" },
+  infoBox:     { display: "flex", gap: 10, alignItems: "flex-start", background: "#16653422", border: "1px solid #16653455", borderRadius: 8, padding: "12px 14px" },
+  infoBoxIcon: { fontSize: 16, flexShrink: 0 },
+  learnFooter: { textAlign: "center" as const, padding: "24px 0 0", borderTop: "1px solid #21262D" },
 };
