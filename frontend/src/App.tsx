@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 
 /* ─── helpers ────────────────────────────────────────────── */
+function parseAmzDate(s: string): number | null {
+  const m = s.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!m) return null;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+}
+
 function parsePresignedUrl(url: string) {
   try {
     const u     = new URL(url);
@@ -141,7 +147,9 @@ function GalleryPage({
   const [uploadMode,    setUploadMode]    = useState<"server" | "direct">("server");
   const [directInfo,    setDirectInfo]    = useState<{ url: string; key: string; file: File } | null>(null);
   const [directReady,   setDirectReady]   = useState(false);
-  const [expirySeconds, setExpirySeconds] = useState(30);
+  const [expirySeconds, setExpirySeconds] = useState(() =>
+    parseInt(localStorage.getItem("expirySeconds") || "30")
+  );
   const [cluster,       setCluster]       = useState<ClusterHealth | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -186,7 +194,7 @@ function GalleryPage({
     setUploading(true); setStatus(null); setLastUpload(null);
     const form = new FormData();
     form.append("image", file);
-    const res  = await fetch("/upload", { method: "POST", body: form });
+    const res  = await fetch(`/upload?expiresIn=${expirySeconds}`, { method: "POST", body: form });
     const data = await res.json();
     setUploading(false);
     if (!res.ok) { setStatus({ ok: false, text: `Upload failed: ${data.error}` }); return; }
@@ -372,7 +380,11 @@ function GalleryPage({
                     min={5}
                     max={1200}
                     value={expirySeconds}
-                    onChange={(e) => setExpirySeconds(parseInt(e.target.value))}
+                    onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  setExpirySeconds(v);
+                  localStorage.setItem("expirySeconds", String(v));
+                }}
                     style={{ width: 100, accentColor: "#4ADE80", cursor: "pointer" }}
                 />
                 <span style={s.sliderValue}>{expirySeconds}s</span>
@@ -401,6 +413,7 @@ function GalleryPage({
                         <div style={s.tileCaption}>
                           <span style={s.tileFilename}>{item.key.replace(/^\d+-/, "")}</span>
                           <span style={s.tileMeta}>{(item.size / 1024).toFixed(1)} KB</span>
+                          <TileTimer url={item.url} />
                         </div>
                       </div>
                   ))}
@@ -657,6 +670,34 @@ function UrlPart({ color, label, value, note }: { color: string; label: string; 
           <p style={s.urlPartNote}>{note}</p>
         </div>
       </div>
+  );
+}
+
+function TileTimer({ url }: { url: string }) {
+  const parsed = parsePresignedUrl(url);
+  const [secs, setSecs] = useState(0);
+
+  useEffect(() => {
+    if (!parsed) return;
+    const signedAt = parseAmzDate(parsed.date);
+    const duration = parseInt(parsed.expiry);
+    if (!signedAt || isNaN(duration)) return;
+    const expiresAt = signedAt + duration * 1000;
+    function tick() { setSecs(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))); }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [url]);
+
+  if (!parsed) return null;
+  const total = parseInt(parsed.expiry);
+  const pct   = total > 0 ? secs / total : 0;
+  const color = pct > 0.5 ? "#4ADE80" : pct > 0.2 ? "#f97316" : "#ef4444";
+
+  return (
+    <span style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 700, color, flexShrink: 0, whiteSpace: "nowrap" as const }}>
+      {secs > 0 ? `${secs}s` : "exp"}
+    </span>
   );
 }
 

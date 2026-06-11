@@ -9,6 +9,7 @@ import {
   ListObjectsV2Command,
   CreateBucketCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -61,6 +62,7 @@ async function ensureBucket() {
 app.post("/upload", upload.single("image"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file provided" });
 
+  const expiresIn = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
   const key = `${Date.now()}-${req.file.originalname}`;
 
   await s3.send(new PutObjectCommand({
@@ -68,9 +70,10 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     Key:         key,
     Body:        req.file.buffer,
     ContentType: req.file.mimetype,
+    Metadata:    { "expires-in": String(expiresIn) },
   }));
 
-  console.log(`[PATH A] Uploaded via server: ${key}`);
+  console.log(`[PATH A] Uploaded via server: ${key} (expiresIn: ${expiresIn}s)`);
   res.json({ key });
 });
 
@@ -108,12 +111,21 @@ app.get("/presign-upload", async (req, res) => {
 
 // GET /gallery — list objects and return presigned GET URLs
 app.get("/gallery", async (req, res) => {
-  const expiresIn = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
+  const defaultExpiry = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
   const list    = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }));
   const objects = list.Contents ?? [];
 
   const items = await Promise.all(
       objects.map(async (obj) => {
+        // Use the expiry stored at upload time so each image keeps its original duration.
+        // Fall back to the slider value for objects uploaded before this was added.
+        let expiresIn = defaultExpiry;
+        try {
+          const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: obj.Key }));
+          const stored = parseInt(head.Metadata?.["expires-in"]);
+          if (!isNaN(stored)) expiresIn = stored;
+        } catch {}
+
         const url = await getSignedUrl(
             s3,
             new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
