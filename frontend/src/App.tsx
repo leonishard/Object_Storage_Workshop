@@ -373,23 +373,6 @@ function GalleryPage({
           <main style={s.galleryArea}>
             <div style={s.galleryTopBar}>
               <h2 style={s.sectionTitle}>Gallery</h2>
-              <div style={s.galleryControls}>
-                <span style={s.sliderLabel}>URL expiry:</span>
-                <input
-                    type="range"
-                    min={5}
-                    max={1200}
-                    value={expirySeconds}
-                    onChange={(e) => {
-                  const v = parseInt(e.target.value);
-                  setExpirySeconds(v);
-                  localStorage.setItem("expirySeconds", String(v));
-                }}
-                    style={{ width: 100, accentColor: "#4ADE80", cursor: "pointer" }}
-                />
-                <span style={s.sliderValue}>{expirySeconds}s</span>
-                <button onClick={() => fetchGallery(expirySeconds)} style={s.refreshBtn}>↻</button>
-              </div>
             </div>
 
             {gallery.length === 0 ? (
@@ -605,21 +588,28 @@ function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; col
 
 /* ── Presigned URL Reveal ── */
 function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpenConcept: (id: ConceptId) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const [copied,   setCopied]   = useState(false);
-  const parsed       = parsePresignedUrl(item.url);
-  const actualExpiry = parsed ? parseInt(parsed.expiry) || 30 : 30;
-  const [secondsLeft, setSecondsLeft] = useState(actualExpiry);
+  const [expanded,    setExpanded]    = useState(false);
+  const [copied,      setCopied]      = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const parsed = parsePresignedUrl(item.url);
 
   useEffect(() => {
-    setSecondsLeft(actualExpiry);
-    const t = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    if (!parsed) return;
+    const signedAt = parseAmzDate(parsed.date);
+    const duration = parseInt(parsed.expiry);
+    if (!signedAt || isNaN(duration)) return;
+    const expiresAt = signedAt + duration * 1000;
+    function tick() { setSecondsLeft(Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))); }
+    tick();
+    const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, [item.url]);
 
+  const duration = parsed ? parseInt(parsed.expiry) : 30;
+
   function copy() { navigator.clipboard.writeText(item.url); setCopied(true); setTimeout(() => setCopied(false), 2000); }
 
-  const pct   = secondsLeft / actualExpiry;
+  const pct   = duration > 0 ? secondsLeft / duration : 0;
   const mins  = Math.floor(secondsLeft / 60);
   const secs  = secondsLeft % 60;
   const color = pct > 0.5 ? "#4ADE80" : pct > 0.2 ? "#f97316" : "#ef4444";
@@ -640,7 +630,7 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
           <span style={{ ...s.psuTimer, color }}>{secondsLeft > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : "Expired"}</span>
         </div>
         <p style={s.psuExpiryNote}>
-          Signed GET URL — expires in {actualExpiry}s. Open in a new tab, wait, then refresh to see the 403.
+          Signed GET URL — expires in {duration}s. Open in a new tab, wait, then refresh to see the 403.
           <button style={s.psuLearnLink} onClick={() => onOpenConcept("presigned-url")}>Learn why ↗</button>
         </p>
         {expanded && parsed && (
