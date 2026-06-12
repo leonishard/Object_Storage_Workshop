@@ -1,8 +1,6 @@
-# Object Storage Workshop — MinIO Image Demo
+# MinIO Object Storage Workshop
 
-A two-hour hands-on workshop showing why object storage beats database BLOBs for images.
-Students upload images through a web page, see a gallery, and inspect the presigned URLs that
-let the browser fetch images **directly from MinIO** — the app never holds the bytes.
+A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, direct uploads, erasure coding, and S3 API compatibility — all running locally with MinIO in Docker.
 
 ---
 
@@ -13,65 +11,58 @@ let the browser fetch images **directly from MinIO** — the app never holds the
 
 ---
 
-## Project layout
+## Setup
 
-```
-Object_Storage_Workshop/
-├── docker-compose.yml   — MinIO container
-├── backend/
-│   ├── server.js        — Express API (upload, gallery, presigned URLs)
-│   ├── .env             — MinIO connection config
-│   └── package.json
-└── frontend/
-    ├── src/App.tsx      — single-page React UI
-    └── vite.config.ts   — dev proxy → backend
+### 1. Install backend dependencies
+
+```bash
+cd backend
+npm install
 ```
 
----
+### 2. Create the backend `.env` file
 
-## Step-by-step: running the workshop
+Copy the example and you're done — the defaults work out of the box:
 
-### 1. Start MinIO
+```bash
+cp .env.example .env
+```
+
+The `.env.example` file contains everything you need — MinIO defaults are pre-filled and the R2 section is ready for the provider-switch demo.
+
+### 3. Start MinIO (Docker)
+
+From the project root:
 
 ```bash
 docker compose up -d
 ```
 
-Verify it started:
+This starts four MinIO nodes and an nginx proxy. Wait about 15 seconds for the cluster to become healthy, then verify:
 
 ```bash
 docker compose ps
-# minio should show "Up" and "healthy"
+# all five containers should show "Up"
 ```
 
-Open the MinIO console at **http://localhost:9001**
-- Username: `minioadmin`
-- Password: `minioadmin`
+You can also open the MinIO console at **http://localhost:9001** and log in with `minioadmin / minioadmin`.
 
-You won't see any buckets yet — the backend creates `workshop-images` automatically on first run.
-
----
-
-### 2. Start the backend
+### 4. Start the backend
 
 ```bash
 cd backend
-npm install
 npm run dev
 ```
 
 You should see:
-
 ```
 Bucket "workshop-images" created
 Backend running on http://localhost:3001
 ```
 
-> If you see "Failed to connect to MinIO", wait 10 seconds for the container healthcheck to pass and retry.
+> If you see "Failed to connect to MinIO", wait 10 seconds and try again — the containers may still be starting.
 
----
-
-### 3. Start the frontend
+### 5. Install frontend dependencies and start the dev server
 
 Open a **second terminal**:
 
@@ -85,60 +76,92 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
-## How it works (teaching notes)
+## What you'll explore
 
-### Upload flow
-
-```
-Browser  →  POST /upload (multipart)  →  Express  →  PutObject  →  MinIO bucket
-```
-
-The image bytes flow through the backend exactly once on the way *in*. After that, the
-backend never touches the file again.
-
-### Gallery / presigned URL flow
-
-```
-Browser  →  GET /gallery  →  Express  →  ListObjectsV2  →  MinIO
-                                       ↓
-                              getSignedUrl() for each key
-                                       ↓
-              JSON [{key, url, size, lastModified}, …]  →  Browser
-                                       ↓
-              <img src="http://localhost:9000/…?X-Amz-Signature=…">
-              Browser fetches image DIRECTLY from MinIO (no backend hop)
-```
-
-The presigned URL is just a regular HTTPS GET with an HMAC signature in the query string.
-It expires (1 hour here). This is the "wow" moment — open DevTools → Network and watch the
-image request go to `:9000`, not `:3001`.
-
-### Why not store images as database BLOBs?
-
-| | Database BLOB | Object storage (MinIO/S3) |
-|---|---|---|
-| Serving | Backend must stream every byte on every request | Browser fetches directly via presigned URL |
-| Scaling | DB RAM/disk is expensive | Cheap, flat storage; scales horizontally |
-| CDN | Hard to put a CDN in front | URL is just HTTP — trivially CDN-able |
-| Backup/restore | Mixed with transactional data | Independent lifecycle |
+| Feature | Where |
+|---|---|
+| Upload via server vs direct to MinIO | Gallery tab — mode toggle |
+| Presigned GET URLs with expiry timers | Gallery tab — sidebar panel |
+| Presigned PUT URL (student exercise) | Gallery tab — Direct to MinIO mode |
+| Erasure coding — live node health | Gallery tab — top panel |
+| Theory behind everything | Under the Hood tab |
 
 ---
 
-## Useful commands during the workshop
+## Student exercise
+
+Students implement the `GET /presign-upload` route in `backend/server.js`. The stub and hints are already there — it takes about 3 lines of code. The app shows a green badge when it's working.
+
+---
+
+## S3 API compatibility demo — switching to Cloudflare R2
+
+This is the live demo for the "one SDK, any vendor" concept. The app switches from local MinIO to real cloud storage by changing **one line in `.env`** — no code changes.
+
+### Before the demo (setup)
+
+1. Log into [dash.cloudflare.com](https://dash.cloudflare.com) → **R2**
+2. Create a bucket called `workshop-images`
+3. Go to **Manage R2 API Tokens** → Create a token with **Object Read & Write** on that bucket
+4. Copy your **Account ID** (shown top-right on the R2 page)
+5. Fill in `backend/.env`:
+
+```
+R2_ACCOUNT_ID=abc123...
+R2_ACCESS_KEY=...
+R2_SECRET_KEY=...
+R2_BUCKET=workshop-images
+```
+
+### The demo (live in front of students)
+
+Open `backend/.env` and change one line:
+
+```
+STORAGE_PROVIDER=r2
+```
+
+Restart the backend (`Ctrl+C`, then `npm run dev`). Upload an image. The gallery loads — presigned URLs now point to `r2.cloudflarestorage.com` instead of `localhost:9000`.
+
+Switch back to MinIO just as fast:
+
+```
+STORAGE_PROVIDER=minio
+```
+
+The teaching point: the SDK code in `server.js` is identical for both. `S3Client`, `PutObjectCommand`, `GetObjectCommand`, `getSignedUrl` — none of it changes. You're coding against the S3 API standard, not a specific vendor.
+
+> **Note:** direct-upload via presigned PUT (PATH B) requires CORS configured on the R2 bucket. For the demo, PATH A (upload via server) and the presigned GET gallery both work without any CORS setup.
+
+---
+
+## Erasure coding demo
 
 ```bash
-# Watch backend logs live
-docker compose logs -f minio
+# Take one node offline — reads and writes still work
+docker compose stop minio3
 
-# List objects in the bucket via AWS CLI (if installed)
-aws --endpoint-url http://localhost:9000 \
-    --no-sign-request \
-    s3 ls s3://workshop-images/
+# Take a second node offline — reads work, writes blocked
+docker compose stop minio4
+
+# Bring them back
+docker compose start minio3 minio4
+```
+
+Watch the node panel update within ~2 seconds each time.
+
+---
+
+## Useful commands
+
+```bash
+# Watch logs
+docker compose logs -f minio1
 
 # Stop everything
 docker compose down
 
-# Stop and delete stored data
+# Stop and wipe stored data
 docker compose down -v
 ```
 
@@ -148,7 +171,8 @@ docker compose down -v
 
 | Symptom | Fix |
 |---|---|
-| `docker compose up` fails on image pull | Try `image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` in docker-compose.yml |
-| "Failed to connect to MinIO" on backend start | Container still starting — wait ~10 s and retry `npm run dev` |
-| Gallery images don't load (broken img tags) | Check that MinIO is on `:9000` and the container is healthy |
-| CORS error in browser | Make sure you're using the Vite proxy (`localhost:5173`), not calling `:3001` directly |
+| "Failed to connect to MinIO" on backend start | Containers still starting — wait ~15 s and retry |
+| Gallery images don't load | Check MinIO is on `:9000` and all containers are healthy |
+| Direct upload fails with 403 | The `/presign-upload` exercise route may not be implemented yet |
+| Node panel shows all nodes down | Check docker-compose.yml port mappings for 9100–9103 |
+| `npm` not recognised on Windows | Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` in PowerShell |

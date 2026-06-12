@@ -6,9 +6,22 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Forward /upload and /gallery to the backend so we don't hit CORS in dev
-      "/upload": "http://localhost:3001",
-      "/gallery": "http://localhost:3001",
+      // Backend routes
+      "/upload":         "http://localhost:3001",
+      "/gallery":        "http://localhost:3001",
+      "/presign-upload": "http://localhost:3001",
+      "/objects":        "http://localhost:3001",
+      "/nodes":          "http://localhost:3001",   // ← added: erasure coding node health
+
+      // MinIO direct-upload proxy — forwards browser PUT requests to MinIO,
+      // bypassing the CORS restriction that blocks cross-origin requests from :5173 to :9000.
+      // changeOrigin rewrites the Host header to localhost:9000 so the presigned
+      // URL signature check still passes.
+      "/minio-direct": {
+        target:       "http://localhost:9000",
+        changeOrigin: true,
+        rewrite:      (path) => path.replace(/^\/minio-direct/, ""),
+      },
     },
   },
 });
