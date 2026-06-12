@@ -373,6 +373,19 @@ function GalleryPage({
           <main style={s.galleryArea}>
             <div style={s.galleryTopBar}>
               <h2 style={s.sectionTitle}>Gallery</h2>
+              <div style={s.galleryControls}>
+                <span style={s.sliderLabel}>URL expiry</span>
+                <input
+                    type="range" min={5} max={300} value={expirySeconds}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value);
+                      setExpirySeconds(v);
+                      localStorage.setItem("expirySeconds", String(v));
+                      fetchGallery(v);
+                    }}
+                />
+                <span style={s.sliderValue}>{expirySeconds}s</span>
+              </div>
             </div>
 
             {gallery.length === 0 ? (
