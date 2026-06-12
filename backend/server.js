@@ -20,25 +20,52 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-const s3 = new S3Client({
-  endpoint: process.env.MINIO_ENDPOINT,
-  region: "us-east-1",
-  credentials: {
-    accessKeyId:     process.env.MINIO_ACCESS_KEY,
-    secretAccessKey: process.env.MINIO_SECRET_KEY,
-  },
-  forcePathStyle: true,
-});
+// ═══════════════════════════════════════════════════════════════
+//  STORAGE PROVIDER — the only thing that changes between vendors
+//
+//  Set STORAGE_PROVIDER in .env to switch:
+//    STORAGE_PROVIDER=minio   →  local Docker cluster (default)
+//    STORAGE_PROVIDER=r2      →  Cloudflare R2
+//
+//  Every route below — upload, gallery, presigned URLs, delete —
+//  is completely unchanged. Same SDK, same commands, different config.
+// ═══════════════════════════════════════════════════════════════
 
-const BUCKET = process.env.MINIO_BUCKET;
+const isR2 = process.env.STORAGE_PROVIDER === "r2";
+
+const s3 = new S3Client(
+  isR2
+    ? {
+        // Cloudflare R2
+        endpoint:    `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        region:      "auto",
+        credentials: {
+          accessKeyId:     process.env.R2_ACCESS_KEY,
+          secretAccessKey: process.env.R2_SECRET_KEY,
+        },
+      }
+    : {
+        // MinIO (local Docker)
+        endpoint:       process.env.MINIO_ENDPOINT,
+        region:         "us-east-1",
+        credentials: {
+          accessKeyId:     process.env.MINIO_ACCESS_KEY,
+          secretAccessKey: process.env.MINIO_SECRET_KEY,
+        },
+        forcePathStyle: true,
+      }
+);
+
+const BUCKET = isR2 ? process.env.R2_BUCKET : process.env.MINIO_BUCKET;
 
 async function ensureBucket() {
   try {
     await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
-    console.log(`Bucket "${BUCKET}" already exists`);
+    console.log(`[${isR2 ? "R2" : "MinIO"}] Bucket "${BUCKET}" ready`);
   } catch {
+    if (isR2) throw new Error(`R2 bucket "${BUCKET}" not found — create it in the Cloudflare dashboard first`);
     await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
-    console.log(`Bucket "${BUCKET}" created`);
+    console.log(`[MinIO] Bucket "${BUCKET}" created`);
   }
 }
 

@@ -28,15 +28,7 @@ Copy the example and you're done — the defaults work out of the box:
 cp .env.example .env
 ```
 
-The `.env.example` file contains:
-
-```
-MINIO_ENDPOINT=http://localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=workshop-images
-PORT=3001
-```
+The `.env.example` file contains everything you need — MinIO defaults are pre-filled and the R2 section is ready for the provider-switch demo.
 
 ### 3. Start MinIO (Docker)
 
@@ -99,6 +91,47 @@ Open **http://localhost:5173** in your browser.
 ## Student exercise
 
 Students implement the `GET /presign-upload` route in `backend/server.js`. The stub and hints are already there — it takes about 3 lines of code. The app shows a green badge when it's working.
+
+---
+
+## S3 API compatibility demo — switching to Cloudflare R2
+
+This is the live demo for the "one SDK, any vendor" concept. The app switches from local MinIO to real cloud storage by changing **one line in `.env`** — no code changes.
+
+### Before the demo (setup)
+
+1. Log into [dash.cloudflare.com](https://dash.cloudflare.com) → **R2**
+2. Create a bucket called `workshop-images`
+3. Go to **Manage R2 API Tokens** → Create a token with **Object Read & Write** on that bucket
+4. Copy your **Account ID** (shown top-right on the R2 page)
+5. Fill in `backend/.env`:
+
+```
+R2_ACCOUNT_ID=abc123...
+R2_ACCESS_KEY=...
+R2_SECRET_KEY=...
+R2_BUCKET=workshop-images
+```
+
+### The demo (live in front of students)
+
+Open `backend/.env` and change one line:
+
+```
+STORAGE_PROVIDER=r2
+```
+
+Restart the backend (`Ctrl+C`, then `npm run dev`). Upload an image. The gallery loads — presigned URLs now point to `r2.cloudflarestorage.com` instead of `localhost:9000`.
+
+Switch back to MinIO just as fast:
+
+```
+STORAGE_PROVIDER=minio
+```
+
+The teaching point: the SDK code in `server.js` is identical for both. `S3Client`, `PutObjectCommand`, `GetObjectCommand`, `getSignedUrl` — none of it changes. You're coding against the S3 API standard, not a specific vendor.
+
+> **Note:** direct-upload via presigned PUT (PATH B) requires CORS configured on the R2 bucket. For the demo, PATH A (upload via server) and the presigned GET gallery both work without any CORS setup.
 
 ---
 
