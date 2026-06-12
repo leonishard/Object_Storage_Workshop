@@ -299,14 +299,14 @@ function GalleryPage({
                   <div style={s.spinnerWrap}><div style={s.spinner} /></div>
               ) : directReady && directInfo ? (
                   <div onClick={(e) => e.stopPropagation()}>
-                    <p style={{ ...s.dropText, color: "#4ADE80", fontWeight: 600, marginBottom: 6 }}>✓ Upload URL ready</p>
+                    <p style={{ ...s.dropText, color: "#059669", fontWeight: 600, marginBottom: 6 }}>✓ Upload URL ready</p>
                     <p style={{ ...s.dropSub, marginBottom: 10 }}>{directInfo.file.name}</p>
                     <button style={s.uploadDirectBtn} onClick={executeDirectUpload}>Upload to MinIO →</button>
                   </div>
               ) : (
                   <>
                     <div style={s.dropIconWrap}>
-                      <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#6E7681" }}>
+                      <svg width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} style={{ color: "#94a3b8" }}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                       </svg>
                     </div>
@@ -324,12 +324,12 @@ function GalleryPage({
                   <textarea readOnly value={directInfo.url} style={s.directUrlBox} rows={3}
                             onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
                   <div style={s.flowDiagram}>
-                    <FlowRow label="Browser" note="your tab"  color="#166534" />
+                    <FlowRow label="Browser" note="your tab"  color="#059669" />
                     <FlowArrow label="GET /presign-upload" sub="got the URL ✓" />
-                    <FlowRow label="Backend" note="Express"   color="#4ADE80" />
+                    <FlowRow label="Backend" note="Express"   color="#10b981" />
                     <FlowArrow label="— no file bytes —" sub="backend is done" dim />
-                    <FlowArrow label="PUT {signed URL}" sub="step 2 →" color="#4ADE80" />
-                    <FlowRow label="MinIO"   note=":9000"     color="#4ADE80" />
+                    <FlowArrow label="PUT {signed URL}" sub="step 2 →" color="#10b981" />
+                    <FlowRow label="MinIO"   note=":9000"     color="#10b981" />
                   </div>
                 </div>
             )}
@@ -349,15 +349,15 @@ function GalleryPage({
             )}
 
             {uploadMode === "direct" && !directInfo && exerciseCompleted && (
-                <div style={{ ...s.exercisePanel, background: "#0D1117", borderColor: "#4ADE80" }}>
-                  <p style={{ ...s.exercisePanelTitle, color: "#4ADE80" }}>✓ Exercise complete</p>
-                  <p style={{ fontSize: 12, color: "#4ADE80", margin: 0 }}>You implemented the presigned PUT route. Direct upload is live.</p>
+                <div style={{ ...s.exercisePanel, background: "#ecfdf5", borderColor: "#059669" }}>
+                  <p style={{ ...s.exercisePanelTitle, color: "#059669" }}>✓ Exercise complete</p>
+                  <p style={{ fontSize: 12, color: "#059669", margin: 0 }}>You implemented the presigned PUT route. Direct upload is live.</p>
                 </div>
             )}
 
             {status && (
-                <div style={{ ...s.statusBar, background: status.ok ? "#0D1117" : "#1a0a0a", borderColor: status.ok ? "#4ADE80" : "#ef4444" }}>
-                  <span style={{ color: status.ok ? "#4ADE80" : "#ef4444", fontSize: 13 }}>{status.ok ? "✓" : "✗"} {status.text}</span>
+                <div style={{ ...s.statusBar, background: status.ok ? "#f0fdf4" : "#fff1f2", borderColor: status.ok ? "#059669" : "#ef4444" }}>
+                  <span style={{ color: status.ok ? "#059669" : "#dc2626", fontSize: 13 }}>{status.ok ? "✓" : "✗"} {status.text}</span>
                 </div>
             )}
 
@@ -378,7 +378,7 @@ function GalleryPage({
             {gallery.length === 0 ? (
                 <div style={s.empty}>
                   <p style={{ fontSize: 48, margin: "0 0 12px" }}>🗄️</p>
-                  <p style={{ color: "#8B949E", margin: 0, fontSize: 14 }}>No images yet — upload one to get started.</p>
+                  <p style={{ color: "#64748b", margin: 0, fontSize: 14 }}>No images yet — upload one to get started.</p>
                 </div>
             ) : (
                 <div style={s.grid}>
@@ -430,15 +430,15 @@ function GalleryPage({
                           {cluster.nodes.map((node, i) => {
                             const isData   = i < cluster.ec.data;
                             const isUp     = node.status === "up";
-                            const color    = isData ? "#166534" : "#4ADE80";
+                            const color    = isData ? "#059669" : "#10b981";
                             const label    = isData ? `D${i + 1}` : `P${i - cluster.ec.data + 1}`;
                             const roleText = isData ? "data" : "parity";
                             return (
-                                <div key={node.id} style={{ ...s.shardCard, opacity: isUp ? 1 : 0.45, borderColor: isUp ? color + "55" : "#21262D", background: isUp ? color + "11" : "#2a3039" }}>
-                                  <div style={{ ...s.shardLabel, color: isUp ? color : "#6E7681" }}>{label}</div>
+                                <div key={node.id} style={{ ...s.shardCard, opacity: isUp ? 1 : 0.45, borderColor: isUp ? color + "55" : "#e2e8f0", background: isUp ? color + "11" : "#f8fafc" }}>
+                                  <div style={{ ...s.shardLabel, color: isUp ? color : "#94a3b8" }}>{label}</div>
                                   <div style={s.shardNodeId}>Node {node.id}</div>
-                                  <div style={{ ...s.shardRole, color: isUp ? color : "#6E7681" }}>{roleText}</div>
-                                  <div style={{ ...s.shardStatus, color: isUp ? "#4ADE80" : "#ef4444" }}>{isUp ? "●" : "✕"}</div>
+                                  <div style={{ ...s.shardRole, color: isUp ? color : "#94a3b8" }}>{roleText}</div>
+                                  <div style={{ ...s.shardStatus, color: isUp ? "#10b981" : "#ef4444" }}>{isUp ? "●" : "✕"}</div>
                                 </div>
                             );
                           })}
@@ -484,10 +484,10 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
           <div style={s.ecNodeRow}>
             {[1, 2, 3, 4].map((id) => (
                 <div key={id} style={s.ecNodeCard}>
-                  <div style={{ ...s.ecNodeIndicator, background: "#21262D" }} />
+                  <div style={{ ...s.ecNodeIndicator, background: "#e2e8f0" }} />
                   <div style={s.ecNodeId}>Node {id}</div>
-                  <div style={{ ...s.ecShardBadge, background: "#2a3039", color: "#6E7681", borderColor: "#21262D" }}>—</div>
-                  <div style={{ ...s.ecNodeStatus, color: "#6E7681" }}>…</div>
+                  <div style={{ ...s.ecShardBadge, background: "#f1f5f9", color: "#94a3b8", borderColor: "#e2e8f0" }}>—</div>
+                  <div style={{ ...s.ecNodeStatus, color: "#94a3b8" }}>…</div>
                 </div>
             ))}
           </div>
@@ -505,15 +505,15 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
                       "All nodes down — cluster offline";
 
   const statusColor =
-      upCount === 4 ? "#4ADE80" :
+      upCount === 4 ? "#10b981" :
           upCount === 3 ? "#f97316" :
               upCount === 2 ? "#f97316" : "#ef4444";
 
   const shardMeta = [
-    { label: "D1", color: "#166534", title: "Data shard 1"   },
-    { label: "D2", color: "#166534", title: "Data shard 2"   },
-    { label: "P1", color: "#4ADE80", title: "Parity shard 1" },
-    { label: "P2", color: "#4ADE80", title: "Parity shard 2" },
+    { label: "D1", color: "#059669", title: "Data shard 1"   },
+    { label: "D2", color: "#059669", title: "Data shard 2"   },
+    { label: "P1", color: "#10b981", title: "Parity shard 1" },
+    { label: "P2", color: "#10b981", title: "Parity shard 2" },
   ];
 
   return (
@@ -533,12 +533,12 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
             const isUp = node.status === "up";
             return (
                 <div key={node.id} style={s.ecNodeCard}>
-                  <div style={{ ...s.ecNodeIndicator, background: isUp ? "#4ADE80" : "#ef4444", boxShadow: isUp ? "0 0 8px #4ADE8055" : "0 0 8px #ef444455" }} />
+                  <div style={{ ...s.ecNodeIndicator, background: isUp ? "#10b981" : "#ef4444", boxShadow: isUp ? "0 0 8px #10b98155" : "0 0 8px #ef444455" }} />
                   <div style={s.ecNodeId}>Node {node.id}</div>
-                  <div title={meta.title} style={{ ...s.ecShardBadge, background: isUp ? meta.color + "22" : "#2a3039", color: isUp ? meta.color : "#6E7681", borderColor: isUp ? meta.color + "55" : "#21262D" }}>
+                  <div title={meta.title} style={{ ...s.ecShardBadge, background: isUp ? meta.color + "22" : "#f1f5f9", color: isUp ? meta.color : "#94a3b8", borderColor: isUp ? meta.color + "55" : "#e2e8f0" }}>
                     {meta.label}
                   </div>
-                  <div style={{ ...s.ecNodeStatus, color: isUp ? "#4ADE80" : "#ef4444" }}>{isUp ? "online" : "offline"}</div>
+                  <div style={{ ...s.ecNodeStatus, color: isUp ? "#10b981" : "#ef4444" }}>{isUp ? "online" : "offline"}</div>
                 </div>
             );
           })}
@@ -548,8 +548,8 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
           <div style={{ ...s.ecStatusDot, background: statusColor, boxShadow: `0 0 6px ${statusColor}66` }} />
           <span style={{ ...s.ecStatusMsg, color: statusColor }}>{statusMsg}</span>
           <div style={s.ecQuorumBadges}>
-            <span style={{ ...s.ecQuorumBadge, background: canRead  ? "#166534" : "#3d0a0a", color: canRead  ? "#4ADE80" : "#ef4444" }}>Read {canRead   ? "✓" : "✗"}</span>
-            <span style={{ ...s.ecQuorumBadge, background: canWrite ? "#166534" : "#3d0a0a", color: canWrite ? "#4ADE80" : "#ef4444" }}>Write {canWrite ? "✓" : "✗"}</span>
+            <span style={{ ...s.ecQuorumBadge, background: canRead  ? "#d1fae5" : "#fee2e2", color: canRead  ? "#059669" : "#dc2626" }}>Read {canRead   ? "✓" : "✗"}</span>
+            <span style={{ ...s.ecQuorumBadge, background: canWrite ? "#d1fae5" : "#fee2e2", color: canWrite ? "#059669" : "#dc2626" }}>Write {canWrite ? "✓" : "✗"}</span>
           </div>
         </div>
 
@@ -565,8 +565,8 @@ function FlowRow({ label, note, color }: { label: string; note: string; color: s
   return (
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 6px ${color}66` }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#E4E5E5" }}>{label}</span>
-        <span style={{ fontSize: 11, color: "#6E7681" }}>{note}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{label}</span>
+        <span style={{ fontSize: 11, color: "#94a3b8" }}>{note}</span>
       </div>
   );
 }
@@ -575,12 +575,12 @@ function FlowArrow({ label, sub, color, dim }: { label: string; sub: string; col
   return (
       <div style={{ paddingLeft: 5, display: "flex", flexDirection: "column", gap: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 1, height: 18, background: "#21262D", marginLeft: 4 }} />
-          <span style={{ fontSize: 11, color: dim ? "#6E7681" : color || "#8B949E", fontFamily: "monospace", fontStyle: dim ? "italic" : "normal" }}>{label}</span>
+          <div style={{ width: 1, height: 18, background: "#e2e8f0", marginLeft: 4 }} />
+          <span style={{ fontSize: 11, color: dim ? "#94a3b8" : color || "#64748b", fontFamily: "monospace", fontStyle: dim ? "italic" : "normal" }}>{label}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 1, height: 8, background: "#21262D", marginLeft: 4 }} />
-          <span style={{ fontSize: 10, color: "#6E7681" }}>{sub}</span>
+          <div style={{ width: 1, height: 8, background: "#e2e8f0", marginLeft: 4 }} />
+          <span style={{ fontSize: 10, color: "#94a3b8" }}>{sub}</span>
         </div>
       </div>
   );
@@ -612,7 +612,7 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
   const pct   = duration > 0 ? secondsLeft / duration : 0;
   const mins  = Math.floor(secondsLeft / 60);
   const secs  = secondsLeft % 60;
-  const color = pct > 0.5 ? "#4ADE80" : pct > 0.2 ? "#f97316" : "#ef4444";
+  const color = pct > 0.5 ? "#10b981" : pct > 0.2 ? "#f97316" : "#ef4444";
 
   return (
       <div style={s.psuRoot}>
@@ -636,11 +636,11 @@ function PresignedUrlReveal({ item, onOpenConcept }: { item: GalleryItem; onOpen
         {expanded && parsed && (
             <div style={s.psuBreakdown}>
               <p style={s.psuBreakdownTitle}>URL breakdown</p>
-              <UrlPart color="#166534" label="Host"            value={parsed.host}                       note="MinIO's endpoint. In production: your S3 domain or CDN." />
-              <UrlPart color="#4ADE80" label="Bucket / Key"    value={`/${parsed.bucket}/${parsed.key}`} note="Bucket name + object key." />
+              <UrlPart color="#059669" label="Host"            value={parsed.host}                       note="MinIO's endpoint. In production: your S3 domain or CDN." />
+              <UrlPart color="#10b981" label="Bucket / Key"    value={`/${parsed.bucket}/${parsed.key}`} note="Bucket name + object key." />
               <UrlPart color="#f97316" label="X-Amz-Date"      value={parsed.date}                       note="When the signature was generated — baked in so it can't be reused." />
               <UrlPart color="#ef4444" label="X-Amz-Expires"   value={`${parsed.expiry}s`}               note="How long until the URL stops working. Tamper with this and the signature breaks." />
-              <UrlPart color="#4ADE80" label="X-Amz-Signature" value={parsed.sig}                        note="HMAC-SHA256 of the URL + expiry + your secret key. Change anything above and this won't match." />
+              <UrlPart color="#10b981" label="X-Amz-Signature" value={parsed.sig}                        note="HMAC-SHA256 of the URL + expiry + your secret key. Change anything above and this won't match." />
               <div style={s.psuRawWrap}>
                 <textarea readOnly value={item.url} style={s.psuRawBox} rows={3} onClick={(e) => (e.target as HTMLTextAreaElement).select()} />
                 <button style={s.psuCopyBtn} onClick={copy}>{copied ? "✓ Copied" : "Copy"}</button>
@@ -682,7 +682,7 @@ function TileTimer({ url }: { url: string }) {
   if (!parsed) return null;
   const total = parseInt(parsed.expiry);
   const pct   = total > 0 ? secs / total : 0;
-  const color = pct > 0.5 ? "#4ADE80" : pct > 0.2 ? "#f97316" : "#ef4444";
+  const color = pct > 0.5 ? "#10b981" : pct > 0.2 ? "#f97316" : "#ef4444";
 
   return (
     <span style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 700, color, flexShrink: 0, whiteSpace: "nowrap" as const }}>
@@ -720,7 +720,7 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
           </div>
         </div>
 
-        <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#166534">
+        <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#059669">
           <p>A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things: bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are just two strings that share a prefix.</p>
           <p>The "folder" the MinIO console draws for <code>2024/</code> is invented by the UI. ListObjectsV2 lets you filter by prefix to simulate folders, but the storage layer is flat.</p>
           <CodeBlock>{`// What the backend runs every time you open the Gallery tab:
@@ -730,7 +730,7 @@ const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" 
           <InfoBox>In the gallery, click any image. The <strong>Object key</strong> row in the metadata panel shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#4ADE80">
+        <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#10b981">
           <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string — MinIO verifies it without storing any session.</p>
           <p>The browser loads images <strong>directly from MinIO</strong> — the Express server is not in the transfer loop. Change one character in the URL and the signature check fails with a 403.</p>
           <CodeBlock>{`const url = await getSignedUrl(
@@ -758,7 +758,7 @@ Browser ──PUT {signed URL}────────────────�
           <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. When you pick a file, the app asks the backend for a signed PUT URL and shows it in the flow diagram before you upload. The PUT goes straight to <code>:9000</code>.</InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-s3" badge="04" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#4ADE80">
+        <ConceptCard id="concept-s3" badge="04" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#10b981">
           <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
           <CodeBlock>{`// Dev (MinIO in Docker):
 const s3 = new S3Client({
@@ -805,7 +805,7 @@ const s3 = new S3Client({
         </div>
 
         <div style={s.learnFooter}>
-          <p style={{ color: "#8B949E", fontSize: 13, margin: 0 }}>
+          <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
             All five concepts are active right now — the Gallery tab is talking to a live 4-node MinIO cluster via Docker.
           </p>
         </div>
@@ -864,7 +864,7 @@ function InfoBox({ children }: { children: React.ReactNode }) {
   return (
       <div style={s.infoBox}>
         <span style={s.infoBoxIcon}>💡</span>
-        <span style={{ fontSize: 13, color: "#4ADE80", lineHeight: 1.6 }}>{children}</span>
+        <span style={{ fontSize: 13, color: "#059669", lineHeight: 1.6 }}>{children}</span>
       </div>
   );
 }
@@ -874,17 +874,17 @@ function InfoBox({ children }: { children: React.ReactNode }) {
 ═══════════════════════════════════════════════════════════ */
 const globalCss = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #0D1117; }
+  body { background: #f8fafc; }
 
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes highlightPulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
-    40%       { box-shadow: 0 0 0 6px rgba(74,222,128,0.3); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    40%       { box-shadow: 0 0 0 6px rgba(16,185,129,0.3); }
   }
 
   .gallery-tile { transition: transform .15s, box-shadow .15s; cursor: pointer; }
-  .gallery-tile:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .gallery-tile:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
   .tile-open-btn { opacity: 0; transition: opacity .15s; }
   .gallery-tile:hover .tile-open-btn { opacity: 1; }
 
@@ -892,158 +892,158 @@ const globalCss = `
   .concept-highlight { animation: highlightPulse .6s ease 2; }
 
   ul, ol { padding-left: 20px; }
-  li { margin-bottom: 4px; font-size: 13px; color: #C6C7C7; line-height: 1.6; }
-  p  { font-size: 14px; color: #C6C7C7; line-height: 1.7; margin-bottom: 12px; }
+  li { margin-bottom: 4px; font-size: 13px; color: #374151; line-height: 1.6; }
+  p  { font-size: 14px; color: #374151; line-height: 1.7; margin-bottom: 12px; }
   p:last-child { margin-bottom: 0; }
-  strong { color: #E4E5E5; }
-  code { background: #2a3039; padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #4ADE80; border: 1px solid #21262D; }
+  strong { color: #0f172a; }
+  code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #059669; border: 1px solid #e2e8f0; }
 `;
 
 const s: Record<string, React.CSSProperties> = {
-  root: { minHeight: "100vh", fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", background: "#0D1117", color: "#E4E5E5" },
+  root: { minHeight: "100vh", fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", background: "#f8fafc", color: "#0f172a" },
 
   /* nav */
-  nav:          { background: "#2a3039", borderBottom: "1px solid #21262D", position: "sticky", top: 0, zIndex: 50 },
+  nav:          { background: "#ffffff", borderBottom: "1px solid #e2e8f0", position: "sticky", top: 0, zIndex: 50 },
   navInner:     { maxWidth: 1080, margin: "0 auto", padding: "0 24px", height: 56, display: "flex", alignItems: "center", justifyContent: "space-between" },
   navBrand:     { display: "flex", alignItems: "center", gap: 10 },
-  navDot:       { width: 10, height: 10, borderRadius: "50%", background: "#4ADE80", boxShadow: "0 0 10px #4ADE8088" },
-  navTitle:     { fontSize: 16, fontWeight: 700, color: "#E4E5E5", letterSpacing: "-0.3px" },
-  navSub:       { fontSize: 11, color: "#6E7681", borderLeft: "1px solid #21262D", paddingLeft: 10, marginLeft: 2 },
+  navDot:       { width: 10, height: 10, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 10px #10b98155" },
+  navTitle:     { fontSize: 16, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.3px" },
+  navSub:       { fontSize: 11, color: "#94a3b8", borderLeft: "1px solid #e2e8f0", paddingLeft: 10, marginLeft: 2 },
   navTabs:      { display: "flex", gap: 4 },
-  navTab:       { background: "transparent", border: "1px solid transparent", borderRadius: 8, padding: "6px 16px", fontSize: 13, color: "#8B949E", cursor: "pointer", fontWeight: 500 },
-  navTabActive: { background: "#0D1117", borderColor: "#21262D", color: "#E4E5E5" },
+  navTab:       { background: "transparent", border: "1px solid transparent", borderRadius: 8, padding: "6px 16px", fontSize: 13, color: "#64748b", cursor: "pointer", fontWeight: 500 },
+  navTabActive: { background: "#f1f5f9", borderColor: "#e2e8f0", color: "#0f172a" },
 
   /* page layout */
   pageWrap: { maxWidth: 1080, margin: "0 auto", padding: "0 24px 40px" },
   twoCol:   { display: "flex", gap: 24, paddingTop: 20, alignItems: "flex-start" },
 
   /* insight ribbon */
-  ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#16653422", border: "1px solid #16653455", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
-  ribbonLabel: { fontSize: 11, fontWeight: 600, color: "#4ADE80", textTransform: "uppercase" as const, letterSpacing: ".5px", whiteSpace: "nowrap" as const },
-  ribbonChip:  { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "#2a3039", border: "1px solid #3D444D", borderRadius: 20, fontSize: 12, fontWeight: 500, color: "#4ADE80", cursor: "pointer" },
-  chipDot:     { width: 6, height: 6, borderRadius: "50%", background: "#4ADE80" },
+  ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
+  ribbonLabel: { fontSize: 11, fontWeight: 600, color: "#059669", textTransform: "uppercase" as const, letterSpacing: ".5px", whiteSpace: "nowrap" as const },
+  ribbonChip:  { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 20, fontSize: 12, fontWeight: 500, color: "#059669", cursor: "pointer" },
+  chipDot:     { width: 6, height: 6, borderRadius: "50%", background: "#10b981" },
   chipArrow:   { fontSize: 10, opacity: 0.6 },
 
   /* sidebar */
   sidebar:      { width: 320, flexShrink: 0, display: "flex", flexDirection: "column" as const, gap: 20 },
-  sectionTitle: { fontSize: 13, fontWeight: 700, color: "#8B949E", textTransform: "uppercase" as const, letterSpacing: ".06em", marginBottom: 12 },
+  sectionTitle: { fontSize: 13, fontWeight: 700, color: "#64748b", textTransform: "uppercase" as const, letterSpacing: ".06em", marginBottom: 12 },
 
   /* mode toggle */
-  modeToggle:    { display: "flex", background: "#2a3039", borderRadius: 10, padding: 4, gap: 4, border: "1px solid #3D444D" },
-  modeBtn:       { flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 7, cursor: "pointer", background: "transparent", color: "#8B949E" },
-  modeBtnActive: { background: "#0D1117", color: "#E4E5E5", boxShadow: "0 1px 3px rgba(0,0,0,.4)" },
+  modeToggle:    { display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 4, border: "1px solid #e2e8f0" },
+  modeBtn:       { flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 7, cursor: "pointer", background: "transparent", color: "#64748b" },
+  modeBtnActive: { background: "#ffffff", color: "#0f172a", boxShadow: "0 1px 3px rgba(0,0,0,.1)" },
 
   /* drop zone */
-  dropZone:        { border: "2px dashed #21262D", borderRadius: 14, padding: "40px 28px", textAlign: "center" as const, cursor: "pointer", background: "#2a3039", transition: "all .15s", minHeight: 160 },
-  dropZoneActive:  { borderColor: "#166534", background: "#16653411" },
+  dropZone:        { border: "2px dashed #e2e8f0", borderRadius: 14, padding: "40px 28px", textAlign: "center" as const, cursor: "pointer", background: "#f8fafc", transition: "all .15s", minHeight: 160 },
+  dropZoneActive:  { borderColor: "#059669", background: "#ecfdf5" },
   dropIconWrap:    { display: "flex", justifyContent: "center", marginBottom: 14 },
-  dropText:        { fontSize: 14, color: "#8B949E", marginBottom: 6 },
-  dropSub:         { fontSize: 12, color: "#6E7681" },
+  dropText:        { fontSize: 14, color: "#64748b", marginBottom: 6 },
+  dropSub:         { fontSize: 12, color: "#94a3b8" },
   spinnerWrap:     { display: "flex", justifyContent: "center", padding: "16px 0" },
-  spinner:         { width: 30, height: 30, border: "3px solid #21262D", borderTopColor: "#4ADE80", borderRadius: "50%", animation: "spin .7s linear infinite" },
-  uploadDirectBtn: { padding: "10px 20px", background: "#166534", color: "#4ADE80", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 },
+  spinner:         { width: 30, height: 30, border: "3px solid #e2e8f0", borderTopColor: "#10b981", borderRadius: "50%", animation: "spin .7s linear infinite" },
+  uploadDirectBtn: { padding: "10px 20px", background: "#059669", color: "#ffffff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 },
 
   /* direct upload panel */
-  directPanel:  { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column" as const, gap: 14 },
+  directPanel:  { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column" as const, gap: 14 },
   directLabel:  { fontSize: 11, fontWeight: 700, color: "#f97316", textTransform: "uppercase" as const, letterSpacing: ".5px" },
-  directUrlBox: { fontFamily: "monospace", fontSize: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid #3D444D", background: "#0D1117", resize: "none" as const, color: "#C6C7C7", lineHeight: 1.6, width: "100%" },
-  flowDiagram:  { background: "#0D1117", borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column" as const, gap: 6 },
+  directUrlBox: { fontFamily: "monospace", fontSize: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc", resize: "none" as const, color: "#374151", lineHeight: 1.6, width: "100%" },
+  flowDiagram:  { background: "#f8fafc", borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column" as const, gap: 6 },
 
   /* exercise panel */
-  exercisePanel:      { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 12, padding: "18px 20px" },
-  exercisePanelTitle: { fontSize: 14, fontWeight: 700, color: "#E4E5E5", marginBottom: 14 },
+  exercisePanel:      { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 20px" },
+  exercisePanelTitle: { fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 14 },
   exerciseList:       { paddingLeft: 20, display: "flex", flexDirection: "column" as const, gap: 8 },
-  exerciseHint:       { fontSize: 12, color: "#8B949E", marginTop: 12, marginBottom: 6 },
-  exerciseDone:       { fontSize: 12, color: "#4ADE80", fontWeight: 600, margin: 0 },
-  inlineCode:         { background: "#0D1117", padding: "2px 5px", borderRadius: 3, fontFamily: "monospace", fontSize: 11, color: "#4ADE80", border: "1px solid #3D444D" },
+  exerciseHint:       { fontSize: 12, color: "#64748b", marginTop: 12, marginBottom: 6 },
+  exerciseDone:       { fontSize: 12, color: "#059669", fontWeight: 600, margin: 0 },
+  inlineCode:         { background: "#f1f5f9", padding: "2px 5px", borderRadius: 3, fontFamily: "monospace", fontSize: 11, color: "#059669", border: "1px solid #e2e8f0" },
 
   statusBar: { padding: "10px 14px", borderRadius: 8, border: "1px solid" },
 
   /* presigned URL reveal */
-  psuRoot:           { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 12, overflow: "hidden" },
-  psuHeader:         { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderBottom: "1px solid #21262D" },
-  psuThumb:          { width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#0D1117" },
-  psuFileName:       { fontSize: 12, fontWeight: 600, color: "#E4E5E5", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
-  psuSubline:        { fontSize: 11, color: "#6E7681", marginTop: 1 },
-  psuOpenBtn:        { background: "#166534", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#4ADE80", padding: "4px 8px", borderRadius: 6, flexShrink: 0 },
-  psuExpandBtn:      { background: "none", border: "none", cursor: "pointer", fontSize: 10, color: "#6E7681", padding: "4px 6px", flexShrink: 0 },
+  psuRoot:           { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" },
+  psuHeader:         { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e2e8f0" },
+  psuThumb:          { width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#f1f5f9" },
+  psuFileName:       { fontSize: 12, fontWeight: 600, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const },
+  psuSubline:        { fontSize: 11, color: "#94a3b8", marginTop: 1 },
+  psuOpenBtn:        { background: "#059669", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#ffffff", padding: "4px 8px", borderRadius: 6, flexShrink: 0 },
+  psuExpandBtn:      { background: "none", border: "none", cursor: "pointer", fontSize: 10, color: "#94a3b8", padding: "4px 6px", flexShrink: 0 },
   psuExpiryRow:      { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px 0" },
-  psuBarWrap:        { flex: 1, height: 4, background: "#21262D", borderRadius: 4, overflow: "hidden" },
+  psuBarWrap:        { flex: 1, height: 4, background: "#e2e8f0", borderRadius: 4, overflow: "hidden" },
   psuBar:            { height: "100%", borderRadius: 4, transition: "width 1s linear, background .5s" },
   psuTimer:          { fontSize: 11, fontWeight: 700, fontFamily: "monospace", whiteSpace: "nowrap" as const, minWidth: 52 },
-  psuExpiryNote:     { fontSize: 11, color: "#8B949E", padding: "5px 12px 10px", lineHeight: 1.6, margin: 0 },
-  psuLearnLink:      { background: "none", border: "none", cursor: "pointer", color: "#4ADE80", fontSize: 11, padding: "0 0 0 4px", fontWeight: 600 },
-  psuBreakdown:      { borderTop: "1px solid #21262D", padding: "12px 12px 14px", display: "flex", flexDirection: "column" as const, gap: 8 },
-  psuBreakdownTitle: { fontSize: 11, fontWeight: 700, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".5px", margin: 0 },
+  psuExpiryNote:     { fontSize: 11, color: "#64748b", padding: "5px 12px 10px", lineHeight: 1.6, margin: 0 },
+  psuLearnLink:      { background: "none", border: "none", cursor: "pointer", color: "#059669", fontSize: 11, padding: "0 0 0 4px", fontWeight: 600 },
+  psuBreakdown:      { borderTop: "1px solid #e2e8f0", padding: "12px 12px 14px", display: "flex", flexDirection: "column" as const, gap: 8 },
+  psuBreakdownTitle: { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".5px", margin: 0 },
   urlPart:           { display: "flex", gap: 8, alignItems: "flex-start" },
   urlPartLabel:      { fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, border: "1px solid", whiteSpace: "nowrap" as const, flexShrink: 0, marginTop: 1 },
-  urlPartValue:      { fontSize: 11, fontFamily: "monospace", color: "#E4E5E5", display: "block", wordBreak: "break-all" as const, background: "#0D1117", padding: "2px 5px", borderRadius: 3 },
-  urlPartNote:       { fontSize: 11, color: "#8B949E", lineHeight: 1.5, margin: "3px 0 0" },
+  urlPartValue:      { fontSize: 11, fontFamily: "monospace", color: "#0f172a", display: "block", wordBreak: "break-all" as const, background: "#f1f5f9", padding: "2px 5px", borderRadius: 3 },
+  urlPartNote:       { fontSize: 11, color: "#64748b", lineHeight: 1.5, margin: "3px 0 0" },
   psuRawWrap:        { display: "flex", gap: 6, alignItems: "flex-start", marginTop: 4 },
-  psuRawBox:         { flex: 1, fontFamily: "monospace", fontSize: 10, padding: "7px 8px", borderRadius: 6, border: "1px solid #3D444D", background: "#0D1117", resize: "none" as const, color: "#8B949E", lineHeight: 1.5 },
-  psuCopyBtn:        { background: "#166534", color: "#4ADE80", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const, flexShrink: 0 },
+  psuRawBox:         { flex: 1, fontFamily: "monospace", fontSize: 10, padding: "7px 8px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", resize: "none" as const, color: "#64748b", lineHeight: 1.5 },
+  psuCopyBtn:        { background: "#059669", color: "#ffffff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const, flexShrink: 0 },
 
-  statRow: { display: "flex", gap: 16, padding: "16px 0", borderTop: "1px solid #21262D" },
+  statRow: { display: "flex", gap: 16, padding: "16px 0", borderTop: "1px solid #e2e8f0" },
   stat:    { flex: 1, display: "flex", flexDirection: "column" as const, gap: 2 },
-  statVal: { fontSize: 22, fontWeight: 700, color: "#E4E5E5", lineHeight: 1 },
-  statKey: { fontSize: 11, color: "#6E7681" },
+  statVal: { fontSize: 22, fontWeight: 700, color: "#0f172a", lineHeight: 1 },
+  statKey: { fontSize: 11, color: "#94a3b8" },
 
   /* gallery */
   galleryArea:     { flex: 1, minWidth: 0 },
   galleryTopBar:   { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   galleryControls: { display: "flex", alignItems: "center", gap: 10 },
-  sliderLabel:     { fontSize: 11, color: "#8B949E", whiteSpace: "nowrap" as const },
-  sliderValue:     { fontSize: 11, fontFamily: "monospace", color: "#4ADE80", minWidth: 36, textAlign: "right" as const },
-  refreshBtn:      { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 8, padding: "6px 12px", fontSize: 16, cursor: "pointer", color: "#8B949E", lineHeight: 1 },
+  sliderLabel:     { fontSize: 11, color: "#64748b", whiteSpace: "nowrap" as const },
+  sliderValue:     { fontSize: 11, fontFamily: "monospace", color: "#10b981", minWidth: 36, textAlign: "right" as const },
+  refreshBtn:      { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 12px", fontSize: 16, cursor: "pointer", color: "#64748b", lineHeight: 1 },
   empty:           { textAlign: "center" as const, padding: "60px 0" },
   grid:            { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 },
-  tile:            { borderRadius: 10, overflow: "hidden", border: "1px solid #3D444D", background: "#2a3039" },
-  imgWrap:         { width: "100%", aspectRatio: "1/1", background: "#0D1117", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative" as const },
+  tile:            { borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", background: "#ffffff" },
+  imgWrap:         { width: "100%", aspectRatio: "1/1", background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative" as const },
   img:             { width: "100%", height: "100%", objectFit: "cover", display: "block" },
-  tileOpenBtn:     { position: "absolute" as const, top: 6, right: 6, background: "rgba(0,0,0,.65)", border: "none", color: "#4ADE80", borderRadius: 6, padding: "3px 7px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  tileOpenBtn:     { position: "absolute" as const, top: 6, right: 6, background: "rgba(0,0,0,.45)", border: "none", color: "#ffffff", borderRadius: 6, padding: "3px 7px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
   tileCaption:     { padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 },
-  tileFilename:    { fontSize: 11, color: "#C6C7C7", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 },
-  tileMeta:        { fontSize: 11, color: "#6E7681", whiteSpace: "nowrap" as const, flexShrink: 0 },
+  tileFilename:    { fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 },
+  tileMeta:        { fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" as const, flexShrink: 0 },
 
   /* modal */
-  overlay:      { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24 },
-  modal:        { background: "#2a3039", borderRadius: 16, overflow: "hidden", maxWidth: 920, width: "100%", position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.6)", border: "1px solid #3D444D", display: "flex" as const },
-  modalClose:   { position: "absolute" as const, top: 14, right: 14, background: "rgba(0,0,0,.5)", border: "none", color: "#E4E5E5", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 },
-  modalImgWrap: { background: "#0D1117", width: "42%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" },
+  overlay:      { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24 },
+  modal:        { background: "#ffffff", borderRadius: 16, overflow: "hidden", maxWidth: 920, width: "100%", position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.12)", border: "1px solid #e2e8f0", display: "flex" as const },
+  modalClose:   { position: "absolute" as const, top: 14, right: 14, background: "rgba(0,0,0,.08)", border: "none", color: "#374151", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 },
+  modalImgWrap: { background: "#f1f5f9", width: "42%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" },
   modalImg:     { maxWidth: "100%", maxHeight: "100%", objectFit: "contain" as const, display: "block" },
-  modalInfo:    { flex: 1, padding: "20px 24px", borderLeft: "1px solid #21262D", display: "flex", flexDirection: "column" as const, minWidth: 0, overflowY: "auto" as const },
-  modalFilename:{ fontSize: 16, fontWeight: 600, color: "#E4E5E5", marginBottom: 14 },
+  modalInfo:    { flex: 1, padding: "20px 24px", borderLeft: "1px solid #e2e8f0", display: "flex", flexDirection: "column" as const, minWidth: 0, overflowY: "auto" as const },
+  modalFilename:{ fontSize: 16, fontWeight: 600, color: "#0f172a", marginBottom: 14 },
   modalMeta:    { display: "flex", flexDirection: "column" as const, gap: 6, marginBottom: 14 },
-  metaRow:      { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "6px 0", borderBottom: "1px solid #21262D" },
-  metaLabel:    { fontSize: 11, fontWeight: 600, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".4px", whiteSpace: "nowrap" as const },
-  metaValue:    { fontSize: 13, color: "#C6C7C7", textAlign: "right" as const, wordBreak: "break-all" as const },
+  metaRow:      { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "6px 0", borderBottom: "1px solid #e2e8f0" },
+  metaLabel:    { fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".4px", whiteSpace: "nowrap" as const },
+  metaValue:    { fontSize: 13, color: "#374151", textAlign: "right" as const, wordBreak: "break-all" as const },
   modalActions: { display: "flex", flexDirection: "column" as const, gap: 8, marginTop: "auto" as const, paddingTop: 14 },
-  openBtn:      { width: "100%", padding: "10px 0", background: "#166534", color: "#4ADE80", border: "1px solid #4ADE8044", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-  deleteBtn:    { width: "100%", padding: "10px 0", background: "#3d0a0a", color: "#ef4444", border: "1px solid #ef444444", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  openBtn:      { width: "100%", padding: "10px 0", background: "#059669", color: "#ffffff", border: "1px solid #10b98133", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+  deleteBtn:    { width: "100%", padding: "10px 0", background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a544", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
 
   /* shard distribution */
-  shardSection: { background: "#0D1117", border: "1px solid #3D444D", borderRadius: 10, padding: "12px 14px", marginBottom: 0 },
-  shardTitle:   { fontSize: 12, fontWeight: 700, color: "#8B949E", marginBottom: 10 },
+  shardSection: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", marginBottom: 0 },
+  shardTitle:   { fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 10 },
   shardGrid:    { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10 },
   shardCard:    { borderRadius: 8, border: "1px solid", padding: "8px 6px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 4, transition: "all .4s" },
   shardLabel:   { fontSize: 13, fontWeight: 800, fontFamily: "monospace", transition: "color .4s" },
-  shardNodeId:  { fontSize: 10, color: "#8B949E" },
+  shardNodeId:  { fontSize: 10, color: "#64748b" },
   shardRole:    { fontSize: 10, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: ".04em", transition: "color .4s" },
   shardStatus:  { fontSize: 14, lineHeight: 1, transition: "color .4s" },
-  shardNote:    { fontSize: 11, color: "#8B949E", lineHeight: 1.5, margin: 0 },
+  shardNote:    { fontSize: 11, color: "#64748b", lineHeight: 1.5, margin: 0 },
 
   /* erasure coding panel */
-  ecPanel:         { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 14, padding: "16px 20px", display: "flex", flexDirection: "column" as const, gap: 12 },
+  ecPanel:         { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "16px 20px", display: "flex", flexDirection: "column" as const, gap: 12 },
   ecPanelHeader:   { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
   ecTitle:         { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
-  ecTitleText:     { fontSize: 13, fontWeight: 700, color: "#E4E5E5" },
-  ecFormula:       { fontSize: 12, fontWeight: 700, fontFamily: "monospace", background: "#0D1117", color: "#4ADE80", padding: "2px 9px", borderRadius: 6, border: "1px solid #3D444D" },
-  ecFormulaNote:   { fontSize: 11, color: "#6E7681" },
-  ecLearnBtn:      { background: "none", border: "1px solid #3D444D", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: "#8B949E", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" as const },
+  ecTitleText:     { fontSize: 13, fontWeight: 700, color: "#0f172a" },
+  ecFormula:       { fontSize: 12, fontWeight: 700, fontFamily: "monospace", background: "#f1f5f9", color: "#059669", padding: "2px 9px", borderRadius: 6, border: "1px solid #e2e8f0" },
+  ecFormulaNote:   { fontSize: 11, color: "#94a3b8" },
+  ecLearnBtn:      { background: "none", border: "1px solid #e2e8f0", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: "#64748b", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" as const },
   ecNodeRow:       { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 },
-  ecNodeCard:      { background: "#1E242C", border: "1px solid #3D444D", borderRadius: 10, padding: "10px 8px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 5 },
+  ecNodeCard:      { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 8px", display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 5 },
   ecNodeIndicator: { width: 10, height: 10, borderRadius: "50%", transition: "background .4s, box-shadow .4s" },
-  ecNodeId:        { fontSize: 11, fontWeight: 600, color: "#E4E5E5" },
+  ecNodeId:        { fontSize: 11, fontWeight: 600, color: "#0f172a" },
   ecShardBadge:    { fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 4, border: "1px solid", transition: "all .4s" },
   ecNodeStatus:    { fontSize: 10, fontWeight: 600, transition: "color .4s" },
   ecStatusBar:     { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: "1px solid", transition: "all .4s", flexWrap: "wrap" as const },
@@ -1051,43 +1051,43 @@ const s: Record<string, React.CSSProperties> = {
   ecStatusMsg:     { fontSize: 12, fontWeight: 600, flex: 1, transition: "color .4s" },
   ecQuorumBadges:  { display: "flex", gap: 6 },
   ecQuorumBadge:   { fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99 },
-  ecHint:          { fontSize: 11, color: "#6E7681", margin: 0, lineHeight: 1.6 },
-  ecHintCode:      { background: "#0D1117", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: 11, color: "#4ADE80", border: "1px solid #3D444D" },
+  ecHint:          { fontSize: 11, color: "#94a3b8", margin: 0, lineHeight: 1.6 },
+  ecHintCode:      { background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: 11, color: "#059669", border: "1px solid #e2e8f0" },
 
   /* learn page */
   learnWrap:     { maxWidth: 760, margin: "0 auto", padding: "40px 24px 60px" },
   learnHeader:   { marginBottom: 32 },
-  learnH1:       { fontSize: 32, fontWeight: 800, color: "#E4E5E5", letterSpacing: "-0.8px", marginBottom: 8 },
-  learnSubtitle: { fontSize: 16, color: "#8B949E" },
+  learnH1:       { fontSize: 32, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.8px", marginBottom: 8 },
+  learnSubtitle: { fontSize: 16, color: "#64748b" },
 
   /* core ideas block */
-  coreBlock:      { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 14, padding: "24px 28px", marginBottom: 28 },
-  coreBlockLabel: { fontSize: 11, fontWeight: 700, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".8px", marginBottom: 16 },
+  coreBlock:      { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "24px 28px", marginBottom: 28 },
+  coreBlockLabel: { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".8px", marginBottom: 16 },
   coreGrid:       { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20 },
   coreIdea:       { display: "flex", flexDirection: "column" as const, gap: 6 },
-  coreIdeaTitle:  { fontSize: 13, fontWeight: 700, color: "#E4E5E5", margin: 0 },
-  coreIdeaText:   { fontSize: 12, color: "#8B949E", lineHeight: 1.65, margin: 0 },
+  coreIdeaTitle:  { fontSize: 13, fontWeight: 700, color: "#0f172a", margin: 0 },
+  coreIdeaText:   { fontSize: 12, color: "#64748b", lineHeight: 1.65, margin: 0 },
 
   /* concept cards */
-  conceptCard:   { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 16, marginBottom: 20, overflow: "hidden", scrollMarginTop: 80 },
-  conceptHeader: { display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", borderBottom: "1px solid #21262D", position: "relative" as const, overflow: "hidden" },
+  conceptCard:   { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, marginBottom: 20, overflow: "hidden", scrollMarginTop: 80 },
+  conceptHeader: { display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", borderBottom: "1px solid #e2e8f0", position: "relative" as const, overflow: "hidden" },
   conceptAccent: { position: "absolute" as const, right: 0, top: 0, width: 4, height: "100%", opacity: 0.6 },
   conceptBadge:  { fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 6, letterSpacing: ".5px", flexShrink: 0 },
-  conceptTitle:  { fontSize: 18, fontWeight: 700, color: "#E4E5E5", letterSpacing: "-0.3px" },
+  conceptTitle:  { fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.3px" },
   conceptTagline:{ fontSize: 12, fontWeight: 500, marginTop: 1 },
   conceptBody:   { padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 12 },
 
-  exBadgePending: { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#2a3039", color: "#6E7681", border: "1px solid #3D444D", whiteSpace: "nowrap" as const, flexShrink: 0 },
-  exBadgeDone:    { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#166534", color: "#4ADE80", whiteSpace: "nowrap" as const, flexShrink: 0 },
+  exBadgePending: { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0", whiteSpace: "nowrap" as const, flexShrink: 0 },
+  exBadgeDone:    { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#d1fae5", color: "#059669", whiteSpace: "nowrap" as const, flexShrink: 0 },
 
   /* good to know */
-  gtkStrip:  { background: "#2a3039", border: "1px solid #3D444D", borderRadius: 12, padding: "18px 22px", marginBottom: 24, display: "flex", flexDirection: "column" as const, gap: 10 },
-  gtkHeader: { fontSize: 11, fontWeight: 700, color: "#6E7681", textTransform: "uppercase" as const, letterSpacing: ".8px" },
-  gtkItem:   { fontSize: 13, color: "#8B949E", lineHeight: 1.6, margin: 0, display: "flex", gap: 8 },
-  gtkDot:    { color: "#21262D", flexShrink: 0, marginTop: 1 },
+  gtkStrip:  { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 22px", marginBottom: 24, display: "flex", flexDirection: "column" as const, gap: 10 },
+  gtkHeader: { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".8px" },
+  gtkItem:   { fontSize: 13, color: "#64748b", lineHeight: 1.6, margin: 0, display: "flex", gap: 8 },
+  gtkDot:    { color: "#cbd5e1", flexShrink: 0, marginTop: 1 },
 
-  codeBlock:   { background: "#0D1117", color: "#C6C7C7", padding: "14px 16px", borderRadius: 8, overflowX: "auto" as const, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre" as const, border: "1px solid #3D444D" },
-  infoBox:     { display: "flex", gap: 10, alignItems: "flex-start", background: "#16653422", border: "1px solid #16653455", borderRadius: 8, padding: "12px 14px" },
+  codeBlock:   { background: "#1e293b", color: "#e2e8f0", padding: "14px 16px", borderRadius: 8, overflowX: "auto" as const, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre" as const, border: "1px solid #334155" },
+  infoBox:     { display: "flex", gap: 10, alignItems: "flex-start", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "12px 14px" },
   infoBoxIcon: { fontSize: 16, flexShrink: 0 },
-  learnFooter: { textAlign: "center" as const, padding: "24px 0 0", borderTop: "1px solid #21262D" },
+  learnFooter: { textAlign: "center" as const, padding: "24px 0 0", borderTop: "1px solid #e2e8f0" },
 };
