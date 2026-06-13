@@ -1,6 +1,6 @@
 # MinIO Object Storage Workshop
 
-A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, direct uploads, erasure coding, and S3 API compatibility — all running locally with MinIO in Docker.
+A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, direct uploads, multipart uploads, erasure coding, and S3 API compatibility — all running locally with MinIO in Docker.
 
 ---
 
@@ -20,19 +20,21 @@ cd backend
 npm install
 ```
 
+This installs all required packages including `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, and `@aws-sdk/s3-request-presigner`.
+
 ### 2. Create the backend `.env` file
 
-Copy the example and you're done — the defaults work out of the box:
+Copy the example — MinIO defaults are pre-filled and work out of the box:
 
 ```bash
 cp .env.example .env
 ```
 
-The `.env.example` file contains everything you need — MinIO defaults are pre-filled and the R2 section is ready for the provider-switch demo.
+The `.env.example` also contains the R2 section ready for the provider-switch demo (see below).
 
 ### 3. Start MinIO (Docker)
 
-From the project root:
+From the **project root**:
 
 ```bash
 docker compose up -d
@@ -56,11 +58,11 @@ npm run dev
 
 You should see:
 ```
-Bucket "workshop-images" created
+[MinIO] Bucket "workshop-images" ready
 Backend running on http://localhost:3001
 ```
 
-> If you see "Failed to connect to MinIO", wait 10 seconds and try again — the containers may still be starting.
+> If you see "Failed to connect to MinIO", wait 10–15 seconds and try again — the containers may still be starting.
 
 ### 5. Install frontend dependencies and start the dev server
 
@@ -83,24 +85,19 @@ Open **http://localhost:5173** in your browser.
 | Upload via server vs direct to MinIO | Gallery tab — mode toggle |
 | Presigned GET URLs with expiry timers | Gallery tab — sidebar panel |
 | Presigned PUT URL (student exercise) | Gallery tab — Direct to MinIO mode |
+| Multipart upload threshold slider | Gallery tab — sidebar |
 | Erasure coding — live node health | Gallery tab — top panel |
 | Theory behind everything | Under the Hood tab |
 
 ---
 
-## Student exercise
-
-Students implement the `GET /presign-upload` route in `backend/server.js`. The stub and hints are already there — it takes about 3 lines of code. The app shows a green badge when it's working.
-
----
-
 ## S3 API compatibility demo — switching to Cloudflare R2
 
-This is the live demo for the "one SDK, any vendor" concept. The app switches from local MinIO to real cloud storage by changing **one line in `.env`** — no code changes.
+This is the live demo for the "one SDK, any vendor" concept. The app switches from local MinIO to real cloud storage by changing **one line in `.env`** — no code changes at all.
 
 ### Before the demo (setup)
 
-1. Log into [dash.cloudflare.com](https://dash.cloudflare.com) → **R2**
+1. Log into [dash.cloudflare.com](https://dash.cloudflare.com) → **R2 Object Storage**
 2. Create a bucket called `workshop-images`
 3. Go to **Manage R2 API Tokens** → Create a token with **Object Read & Write** on that bucket
 4. Copy your **Account ID** (shown top-right on the R2 page)
@@ -121,7 +118,7 @@ Open `backend/.env` and change one line:
 STORAGE_PROVIDER=r2
 ```
 
-Restart the backend (`Ctrl+C`, then `npm run dev`). Upload an image. The gallery loads — presigned URLs now point to `r2.cloudflarestorage.com` instead of `localhost:9000`.
+The backend restarts automatically. Upload an image — the gallery loads and presigned URLs now point to `r2.cloudflarestorage.com` instead of `localhost:9000`.
 
 Switch back to MinIO just as fast:
 
@@ -155,13 +152,13 @@ Watch the node panel update within ~2 seconds each time.
 ## Useful commands
 
 ```bash
-# Watch logs
+# Watch MinIO logs live
 docker compose logs -f minio1
 
 # Stop everything
 docker compose down
 
-# Stop and wipe stored data
+# Stop and wipe all stored data
 docker compose down -v
 ```
 
@@ -173,6 +170,7 @@ docker compose down -v
 |---|---|
 | "Failed to connect to MinIO" on backend start | Containers still starting — wait ~15 s and retry |
 | Gallery images don't load | Check MinIO is on `:9000` and all containers are healthy |
-| Direct upload fails with 403 | The `/presign-upload` exercise route may not be implemented yet |
 | Node panel shows all nodes down | Check docker-compose.yml port mappings for 9100–9103 |
+| R2 bucket not found error | Create the bucket in the Cloudflare dashboard first |
+| Upload fails with `NotImplemented` on R2 | Check you're on the latest `server.js` — tagging is skipped for R2 automatically |
 | `npm` not recognised on Windows | Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` in PowerShell |
