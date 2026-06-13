@@ -210,8 +210,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
                         "upload-mode":         "multipart",
                         "multipart-threshold": String(multipartThreshold),
                     },
-                    // Tag each object with upload method — visible in MinIO console
-                    Tagging: "upload-mode=multipart&source=workshop",
+                    // Tag each object with upload method — visible in MinIO console (MinIO only, R2 doesn't support object tagging)
+                    ...(!isR2 && { Tagging: "upload-mode=multipart&source=workshop" }),
                 },
             });
 
@@ -240,7 +240,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
                     "expires-in":  String(expiresIn),
                     "upload-mode": "single-put",
                 },
-                Tagging: "upload-mode=single-put&source=workshop",
+                ...(!isR2 && { Tagging: "upload-mode=single-put&source=workshop" }),
             }));
 
             progressMap.set(uploadId, {
