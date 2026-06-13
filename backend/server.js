@@ -24,6 +24,11 @@ app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// MinIO enforces a hard 5 MB minimum on each individual multipart part.
+// Files below this threshold always use a single PutObjectCommand regardless
+// of what the slider is set to.
+const MINIO_MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MB
+
 // ═══════════════════════════════════════════════════════════════
 //  STORAGE PROVIDER
 // ═══════════════════════════════════════════════════════════════
@@ -122,7 +127,12 @@ async function ensureBucket() {
 //
 //  Query params:
 //    expiresIn        — presigned URL lifetime in seconds (default 30)
-//    multipartThreshold — bytes above which multipart kicks in (default 5 MB)
+//    multipartMB      — MB above which multipart kicks in (default 5 MB)
+//
+//  Multipart only activates when the file is BOTH:
+//    - at or above the slider threshold (multipartMB)
+//    - at or above MINIO_MIN_PART_SIZE (5 MB hard floor)
+//  Files under 5 MB always use a single PutObjectCommand.
 //
 //  Progress is streamed back via Server-Sent Events on GET /upload-progress/:id
 //  The client opens the SSE connection before POSTing the file, then both
@@ -167,11 +177,16 @@ app.get("/upload-progress/:id", (req, res) => {
 app.post("/upload", upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file provided" });
 
-    const expiresIn         = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn)         || 30));
-    const multipartThreshold = Math.max(1, Math.min(500,  parseInt(req.query.multipartMB)       || 5)) * 1024 * 1024;
-    const uploadId          = req.query.uploadId || `upload-${Date.now()}`;
-    const key               = `${Date.now()}-${req.file.originalname}`;
-    const isMultipart       = req.file.size >= multipartThreshold;
+    const expiresIn          = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn)   || 30));
+    const multipartThreshold = Math.max(5, Math.min(500,   parseInt(req.query.multipartMB) || 5)) * 1024 * 1024;
+    const uploadId           = req.query.uploadId || `upload-${Date.now()}`;
+    const key                = `${Date.now()}-${req.file.originalname}`;
+
+    // Multipart only kicks in when the file meets BOTH the slider threshold
+    // AND MinIO's hard 5 MB per-part minimum. Files under 5 MB always
+    // use a single PUT — no EntityTooSmall error, no forced file size.
+    const effectiveThreshold = Math.max(MINIO_MIN_PART_SIZE, multipartThreshold);
+    const isMultipart        = req.file.size >= effectiveThreshold;
 
     progressMap.set(uploadId, { loaded: 0, total: req.file.size, done: false, error: null, isMultipart });
 
@@ -182,8 +197,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
             // them concurrently (queueSize). MinIO assembles the parts atomically.
             const managed = new Upload({
                 client: s3,
-                queueSize: 4,            // up to 4 parts in flight simultaneously
-                partSize:  multipartThreshold, // each chunk = threshold size
+                queueSize: 4,                                              // up to 4 parts in flight simultaneously
+                partSize:  Math.max(MINIO_MIN_PART_SIZE, multipartThreshold), // never go below MinIO's 5 MB floor
                 leavePartsOnError: false,
                 params: {
                     Bucket:      BUCKET,
@@ -240,7 +255,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
             done: true, error: null, isMultipart,
         });
 
-        console.log(`[PATH A] ${isMultipart ? "Multipart" : "Single PUT"}: ${key} (${(req.file.size / 1024).toFixed(1)} KB, threshold: ${(multipartThreshold / 1024 / 1024).toFixed(1)} MB)`);
+        console.log(`[PATH A] ${isMultipart ? "Multipart" : "Single PUT"}: ${key} (${(req.file.size / 1024).toFixed(1)} KB, threshold: ${(effectiveThreshold / 1024 / 1024).toFixed(1)} MB)`);
         res.json({ key, isMultipart });
 
     } catch (err) {
