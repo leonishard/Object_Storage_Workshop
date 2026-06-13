@@ -165,7 +165,9 @@ function GalleryPage({
   const [directInfo,        setDirectInfo]        = useState<{ url: string; key: string; file: File } | null>(null);
   const [directReady,       setDirectReady]       = useState(false);
   const [expirySeconds,     setExpirySeconds]     = useState(() => parseInt(localStorage.getItem("expirySeconds") || "30"));
-  const [multipartMB,       setMultipartMB]       = useState(() => parseInt(localStorage.getItem("multipartMB")   || "5"));
+  // Slider minimum is 5 — MinIO's hard per-part floor means files under 5 MB
+  // always use single PUT regardless of this value.
+  const [multipartMB,       setMultipartMB]       = useState(() => Math.max(5, parseInt(localStorage.getItem("multipartMB") || "5")));
   const [uploadProgress,    setUploadProgress]    = useState<UploadProgress | null>(null);
   const [cluster,           setCluster]           = useState<ClusterHealth | null>(null);
 
@@ -217,7 +219,7 @@ function GalleryPage({
     setUploadProgress(null);
 
     const uploadId   = `upload-${Date.now()}`;
-    const thresholdB = multipartMB * 1024 * 1024;
+    const thresholdB = Math.max(5 * 1024 * 1024, multipartMB * 1024 * 1024);
     const willMultipart = file.size >= thresholdB;
 
     // Open SSE connection before POSTing so we don't miss early progress events
@@ -357,7 +359,7 @@ function GalleryPage({
                     <span style={s.sliderCardValue}>{multipartMB} MB</span>
                   </div>
                   <input
-                      type="range" min={1} max={50} value={multipartMB}
+                      type="range" min={5} max={50} value={multipartMB}
                       style={{ width: "100%", accentColor: "#059669" }}
                       onChange={(e) => {
                         const v = parseInt(e.target.value);
@@ -366,7 +368,7 @@ function GalleryPage({
                       }}
                   />
                   <p style={s.sliderCardHint}>
-                    Files ≥ {multipartMB} MB use multipart upload (chunked). Files below use a single PUT.
+                    Files ≥ {multipartMB} MB use multipart upload (chunked). Files under 5 MB always use a single PUT — MinIO enforces a 5 MB minimum part size.
                     <button style={s.sliderLearnLink} onClick={() => onOpenConcept("multipart-upload")}>Learn more ↗</button>
                   </p>
                 </div>
@@ -915,7 +917,7 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
           <CodeBlock>{`const managed = new Upload({
   client:    s3,
   queueSize: 4,          // 4 parts uploading simultaneously
-  partSize:  threshold,  // set by the slider in MB
+  partSize:  threshold,  // set by the slider in MB (minimum 5 MB — MinIO hard floor)
   params: {
     Bucket: BUCKET, Key: key,
     Body:   fileBuffer,
@@ -929,8 +931,9 @@ managed.on("httpUploadProgress", (p) => {
 
 await managed.done();   // MinIO assembles all parts here`}</CodeBlock>
           <p>
-            The <strong>multipart threshold slider</strong> in the Gallery tab controls when this kicks in.
-            Lower it to 1 MB to see chunking on small test files. Raise it to test single PUT on large files.
+            The <strong>multipart threshold slider</strong> in the Gallery tab controls when this kicks in (minimum 5 MB).
+            Files under 5 MB always use a single PUT — MinIO enforces a 5 MB minimum per part.
+            Use a file above your slider value to see chunked uploading in action.
           </p>
           <InfoBox>
             Upload a file in "Via Server" mode. The progress bar shows "⚡ Multipart" or "→ Single PUT" depending on whether your file meets the threshold. Part numbers appear in real time as each chunk lands.
