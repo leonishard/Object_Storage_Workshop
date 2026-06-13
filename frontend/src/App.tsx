@@ -125,7 +125,7 @@ export default function App() {
           <div style={s.navInner}>
             <div style={s.navBrand}>
               <span style={s.navDot} />
-              <span style={s.navTitle}>Stash</span>
+              <span style={s.navTitle}>Object Storage Workshop</span>
               <span style={s.navSub}>powered by MinIO</span>
             </div>
             <div style={s.navTabs}>
@@ -871,7 +871,7 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
       <div style={s.learnWrap}>
         <div style={s.learnHeader}>
           <h1 style={s.learnH1}>Under the Hood</h1>
-          <p style={s.learnSubtitle}>Theory behind what you just did in the Gallery tab.</p>
+          <p style={s.learnSubtitle}>Theory behind what you just did in the Gallery tab</p>
         </div>
 
         <div style={s.coreBlock}>
@@ -890,7 +890,7 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
           <InfoBox>Click any image in the gallery. The <strong>Object key</strong> row shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#10b981">
+        <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#059669">
           <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string.</p>
           <CodeBlock>{`const url = await getSignedUrl(
   s3,
@@ -900,7 +900,7 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
           <InfoBox>Use the expiry slider, upload an image, click ↗ to open it in a new tab — then wait for the timer to hit zero and refresh that tab to get a 403.</InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-direct-upload" badge="03" title="Direct Upload — Presigned PUT" tagline="Backend as keyholder, not middleman" color="#f97316" exerciseBadge={{ completed: exerciseCompleted }}>
+        <ConceptCard id="concept-direct-upload" badge="03" title="Direct Upload — Presigned PUT" tagline="Backend as keyholder, not middleman" color="#059669" exerciseBadge={{ completed: exerciseCompleted }}>
           <p>A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the browser uploads straight to MinIO. The server never touches the file bytes.</p>
           <CodeBlock>{`// Via server:  Browser → Express → MinIO  (bytes go through Express)
 // Direct:      Browser → MinIO            (bytes skip Express entirely)
@@ -908,7 +908,7 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
           <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. Pick a file to see the signed PUT URL before you upload.</InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-multipart" badge="04" title="Multipart Upload" tagline="Large files in parallel chunks" color="#8b5cf6">
+        <ConceptCard id="concept-multipart" badge="04" title="Multipart Upload" tagline="Large files in parallel chunks" color="#059669">
           <p>
             For files above the threshold, <code>@aws-sdk/lib-storage</code> automatically splits the file into parts
             and uploads them concurrently. MinIO assembles the parts atomically — if the upload fails partway through,
@@ -940,7 +940,7 @@ await managed.done();   // MinIO assembles all parts here`}</CodeBlock>
           </InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-s3" badge="05" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#10b981">
+        <ConceptCard id="concept-s3" badge="05" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#059669">
           <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
           <CodeBlock>{`// Dev (MinIO in Docker) — the only line that changes:
 endpoint: "http://localhost:9000"
@@ -949,7 +949,7 @@ endpoint: "http://localhost:9000"
 region: "us-east-1"   // no endpoint needed — SDK knows where to go`}</CodeBlock>
         </ConceptCard>
 
-        <ConceptCard id="concept-erasure" badge="06" title="Erasure Coding" tagline="Survive node failures without full copies" color="#ef4444">
+        <ConceptCard id="concept-erasure" badge="06" title="Erasure Coding" tagline="Survive node failures without full copies" color="#059669">
           <p>MinIO uses <strong>Reed-Solomon erasure coding</strong> to split each object into shards. With EC:2 across 4 nodes: 2 data shards + 2 parity shards. Any 2 shards reconstruct the full object.</p>
           <CodeBlock>{`Node 1 → Data shard 1     Node 3 → Parity shard 1
 Node 2 → Data shard 2     Node 4 → Parity shard 2
@@ -1027,7 +1027,6 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
 function InfoBox({ children }: { children: React.ReactNode }) {
   return (
       <div style={s.infoBox}>
-        <span style={s.infoBoxIcon}>💡</span>
         <span style={{ fontSize: 13, color: "#059669", lineHeight: 1.6 }}>{children}</span>
       </div>
   );
@@ -1039,6 +1038,7 @@ function InfoBox({ children }: { children: React.ReactNode }) {
 const globalCss = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #f8fafc; }
+  button:focus, button:focus-visible { outline: none !important; box-shadow: none !important; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes highlightPulse {
@@ -1057,6 +1057,7 @@ const globalCss = `
   p:last-child { margin-bottom: 0; }
   strong { color: #0f172a; }
   code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #059669; border: 1px solid #e2e8f0; }
+  pre code { background: transparent; border: none; padding: 0; color: inherit; }
 `;
 
 const s: Record<string, React.CSSProperties> = {
@@ -1068,8 +1069,8 @@ const s: Record<string, React.CSSProperties> = {
   navTitle:     { fontSize: 16, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.3px" },
   navSub:       { fontSize: 11, color: "#94a3b8", borderLeft: "1px solid #e2e8f0", paddingLeft: 10, marginLeft: 2 },
   navTabs:      { display: "flex", gap: 4 },
-  navTab:       { background: "transparent", border: "1px solid transparent", borderRadius: 8, padding: "6px 16px", fontSize: 13, color: "#64748b", cursor: "pointer", fontWeight: 500 },
-  navTabActive: { background: "#f1f5f9", borderColor: "#e2e8f0", color: "#0f172a" },
+  navTab:       { background: "transparent", border: "2px solid transparent", borderRadius: 8, padding: "6px 16px", fontSize: 13, color: "#64748b", cursor: "pointer", fontWeight: 500 },
+  navTabActive: { background: "#f1f5f9", borderColor: "#b8c4ce", color: "#0f172a", fontWeight: 650 },
   pageWrap: { maxWidth: 1080, margin: "0 auto", padding: "0 24px 40px" },
   twoCol:   { display: "flex", gap: 24, paddingTop: 20, alignItems: "flex-start" },
   ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
