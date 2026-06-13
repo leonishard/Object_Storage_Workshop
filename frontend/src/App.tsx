@@ -23,6 +23,12 @@ function parsePresignedUrl(url: string) {
   } catch { return null; }
 }
 
+function formatBytes(b: number) {
+  if (b < 1024)        return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(2)} MB`;
+}
+
 /* ─── types ──────────────────────────────────────────────── */
 interface GalleryItem {
   key:          string;
@@ -46,6 +52,15 @@ interface ClusterHealth {
   upCount:  number;
 }
 
+interface UploadProgress {
+  loaded:      number;
+  total:       number;
+  done:        boolean;
+  error:       string | null;
+  isMultipart: boolean;
+  part?:       number | null;
+}
+
 type ConceptId =
     | "presigned-url"
     | "object-metadata"
@@ -54,7 +69,8 @@ type ConceptId =
     | "versioning"
     | "bucket-policy"
     | "direct-upload"
-    | "erasure-coding";
+    | "erasure-coding"
+    | "multipart-upload";
 
 interface InsightEvent {
   conceptId: ConceptId;
@@ -63,14 +79,15 @@ interface InsightEvent {
 }
 
 const CONCEPTS: Record<ConceptId, { title: string; anchor: string }> = {
-  "presigned-url":   { title: "Presigned URLs",    anchor: "concept-presigned" },
-  "object-metadata": { title: "Object Metadata",   anchor: "concept-metadata" },
-  buckets:           { title: "Buckets",            anchor: "concept-buckets" },
-  "s3-api":          { title: "S3 API Compat.",     anchor: "concept-s3" },
+  "presigned-url":   { title: "Presigned URLs",    anchor: "concept-presigned"  },
+  "object-metadata": { title: "Object Metadata",   anchor: "concept-metadata"   },
+  buckets:           { title: "Buckets",            anchor: "concept-buckets"    },
+  "s3-api":          { title: "S3 API Compat.",     anchor: "concept-s3"         },
   versioning:        { title: "Versioning",         anchor: "concept-versioning" },
-  "bucket-policy":   { title: "Bucket Policies",   anchor: "concept-policy" },
+  "bucket-policy":   { title: "Bucket Policies",   anchor: "concept-policy"     },
   "direct-upload":   { title: "Direct Upload",     anchor: "concept-direct-upload" },
-  "erasure-coding":  { title: "Erasure Coding",    anchor: "concept-erasure" },
+  "erasure-coding":  { title: "Erasure Coding",    anchor: "concept-erasure"    },
+  "multipart-upload":{ title: "Multipart Upload",  anchor: "concept-multipart"  },
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -136,28 +153,30 @@ function GalleryPage({
   onExerciseComplete: () => void;
   exerciseCompleted:  boolean;
 }) {
-  const [gallery,       setGallery]       = useState<GalleryItem[]>([]);
-  const [uploading,     setUploading]     = useState(false);
-  const [status,        setStatus]        = useState<{ ok: boolean; text: string } | null>(null);
-  const [lastUpload,    setLastUpload]    = useState<GalleryItem | null>(null);
-  const [dragOver,      setDragOver]      = useState(false);
-  const [selected,      setSelected]      = useState<GalleryItem | null>(null);
-  const [insights,      setInsights]      = useState<InsightEvent[]>([]);
-  const [deleting,      setDeleting]      = useState(false);
-  const [uploadMode,    setUploadMode]    = useState<"server" | "direct">("server");
-  const [directInfo,    setDirectInfo]    = useState<{ url: string; key: string; file: File } | null>(null);
-  const [directReady,   setDirectReady]   = useState(false);
-  const [expirySeconds, setExpirySeconds] = useState(() =>
-    parseInt(localStorage.getItem("expirySeconds") || "30")
-  );
-  const [cluster,       setCluster]       = useState<ClusterHealth | null>(null);
+  const [gallery,           setGallery]           = useState<GalleryItem[]>([]);
+  const [uploading,         setUploading]         = useState(false);
+  const [status,            setStatus]            = useState<{ ok: boolean; text: string } | null>(null);
+  const [lastUpload,        setLastUpload]        = useState<GalleryItem | null>(null);
+  const [dragOver,          setDragOver]          = useState(false);
+  const [selected,          setSelected]          = useState<GalleryItem | null>(null);
+  const [insights,          setInsights]          = useState<InsightEvent[]>([]);
+  const [deleting,          setDeleting]          = useState(false);
+  const [uploadMode,        setUploadMode]        = useState<"server" | "direct">("server");
+  const [directInfo,        setDirectInfo]        = useState<{ url: string; key: string; file: File } | null>(null);
+  const [directReady,       setDirectReady]       = useState(false);
+  const [expirySeconds,     setExpirySeconds]     = useState(() => parseInt(localStorage.getItem("expirySeconds") || "30"));
+  const [multipartMB,       setMultipartMB]       = useState(() => parseInt(localStorage.getItem("multipartMB")   || "5"));
+  const [uploadProgress,    setUploadProgress]    = useState<UploadProgress | null>(null);
+  const [cluster,           setCluster]           = useState<ClusterHealth | null>(null);
 
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef    = useRef<HTMLInputElement>(null);
+  const sseRef     = useRef<EventSource | null>(null);
 
   function pushInsight(ev: InsightEvent) {
     setInsights((prev) => prev.find((e) => e.conceptId === ev.conceptId) ? prev : [...prev, ev]);
   }
 
+  // ── Node polling ──────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     async function pollNodes() {
@@ -182,23 +201,66 @@ function GalleryPage({
     data.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
     setGallery(data);
     if (data.length > 0) {
-      pushInsight({ conceptId: "buckets", label: "Bucket loaded", detail: `${data.length} object(s) retrieved.` });
-      pushInsight({ conceptId: "s3-api",  label: "S3 API used",   detail: "ListObjectsV2 called via the S3-compatible MinIO endpoint." });
+      pushInsight({ conceptId: "buckets", label: "Bucket loaded",  detail: `${data.length} object(s) retrieved.` });
+      pushInsight({ conceptId: "s3-api",  label: "S3 API used",    detail: "ListObjectsV2 called via the S3-compatible MinIO endpoint." });
     }
     return data;
   }
 
   useEffect(() => { fetchGallery(); }, []);
 
+  // ── Server upload with SSE progress ──────────────────────────────────────
   async function serverUpload(file: File) {
-    setUploading(true); setStatus(null); setLastUpload(null);
+    setUploading(true);
+    setStatus(null);
+    setLastUpload(null);
+    setUploadProgress(null);
+
+    const uploadId   = `upload-${Date.now()}`;
+    const thresholdB = multipartMB * 1024 * 1024;
+    const willMultipart = file.size >= thresholdB;
+
+    // Open SSE connection before POSTing so we don't miss early progress events
+    sseRef.current?.close();
+    const sse = new EventSource(`/upload-progress/${uploadId}`);
+    sseRef.current = sse;
+
+    sse.onmessage = (e) => {
+      const p: UploadProgress = JSON.parse(e.data);
+      setUploadProgress(p);
+      if (p.done || p.error) {
+        sse.close();
+        sseRef.current = null;
+      }
+    };
+    sse.onerror = () => { sse.close(); sseRef.current = null; };
+
+    if (willMultipart) {
+      pushInsight({
+        conceptId: "multipart-upload",
+        label:     "Multipart upload triggered",
+        detail:    `File (${formatBytes(file.size)}) ≥ threshold (${multipartMB} MB) — uploading in chunks.`,
+      });
+    }
+
     const form = new FormData();
     form.append("image", file);
-    const res  = await fetch(`/upload?expiresIn=${expirySeconds}`, { method: "POST", body: form });
+
+    const res  = await fetch(
+        `/upload?expiresIn=${expirySeconds}&multipartMB=${multipartMB}&uploadId=${uploadId}`,
+        { method: "POST", body: form }
+    );
     const data = await res.json();
     setUploading(false);
-    if (!res.ok) { setStatus({ ok: false, text: `Upload failed: ${data.error}` }); return; }
-    setStatus({ ok: true, text: `"${file.name}" uploaded via server` });
+
+    if (!res.ok) {
+      setStatus({ ok: false, text: `Upload failed: ${data.error}${data.detail ? ` — ${data.detail}` : ""}` });
+      return;
+    }
+
+    const modeLabel = data.isMultipart ? "multipart" : "single PUT";
+    setStatus({ ok: true, text: `"${file.name}" uploaded via server (${modeLabel})` });
+
     const updated = await fetchGallery();
     const newest  = updated.find((i) => i.key === data.key);
     if (newest) {
@@ -208,6 +270,7 @@ function GalleryPage({
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  // ── Direct upload (unchanged) ─────────────────────────────────────────────
   async function getDirectUrl(file: File) {
     setStatus(null); setLastUpload(null); setDirectReady(false);
     const res  = await fetch(`/presign-upload?filename=${encodeURIComponent(file.name)}&contentType=${encodeURIComponent(file.type)}`);
@@ -286,6 +349,29 @@ function GalleryPage({
                       onClick={() => { setUploadMode("direct"); setDirectInfo(null); setDirectReady(false); }}>Direct to MinIO</button>
             </div>
 
+            {/* Multipart threshold slider — only shown in Via Server mode */}
+            {uploadMode === "server" && (
+                <div style={s.sliderCard}>
+                  <div style={s.sliderCardHeader}>
+                    <span style={s.sliderCardTitle}>Multipart threshold</span>
+                    <span style={s.sliderCardValue}>{multipartMB} MB</span>
+                  </div>
+                  <input
+                      type="range" min={1} max={50} value={multipartMB}
+                      style={{ width: "100%", accentColor: "#059669" }}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value);
+                        setMultipartMB(v);
+                        localStorage.setItem("multipartMB", String(v));
+                      }}
+                  />
+                  <p style={s.sliderCardHint}>
+                    Files ≥ {multipartMB} MB use multipart upload (chunked). Files below use a single PUT.
+                    <button style={s.sliderLearnLink} onClick={() => onOpenConcept("multipart-upload")}>Learn more ↗</button>
+                  </p>
+                </div>
+            )}
+
             <div
                 style={{ ...s.dropZone, ...(dragOver ? s.dropZoneActive : {}) }}
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -295,8 +381,11 @@ function GalleryPage({
             >
               <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
                      onChange={(e) => { if (e.target.files?.[0]) handleFileChange(e.target.files[0]); }} />
+
               {uploading ? (
-                  <div style={s.spinnerWrap}><div style={s.spinner} /></div>
+                  <div style={{ padding: "8px 0" }}>
+                    <UploadProgressBar progress={uploadProgress} />
+                  </div>
               ) : directReady && directInfo ? (
                   <div onClick={(e) => e.stopPropagation()}>
                     <p style={{ ...s.dropText, color: "#059669", fontWeight: 600, marginBottom: 6 }}>✓ Upload URL ready</p>
@@ -377,6 +466,7 @@ function GalleryPage({
                 <span style={s.sliderLabel}>URL expiry</span>
                 <input
                     type="range" min={5} max={300} value={expirySeconds}
+                    style={{ accentColor: "#059669" }}
                     onChange={(e) => {
                       const v = parseInt(e.target.value);
                       setExpirySeconds(v);
@@ -482,7 +572,73 @@ function GalleryPage({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   NODE STATUS PANEL
+   UPLOAD PROGRESS BAR
+   Shown inside the drop zone during a Via Server upload.
+   Displays differently for multipart vs single PUT.
+═══════════════════════════════════════════════════════════ */
+function UploadProgressBar({ progress }: { progress: UploadProgress | null }) {
+  if (!progress) {
+    return (
+        <div style={s.progressWrap}>
+          <div style={s.spinnerWrap}><div style={s.spinner} /></div>
+          <p style={{ ...s.dropSub, marginTop: 8 }}>Preparing upload…</p>
+        </div>
+    );
+  }
+
+  const pct   = progress.total > 0 ? Math.min(100, (progress.loaded / progress.total) * 100) : 0;
+  const color = progress.error ? "#ef4444" : progress.done ? "#059669" : "#10b981";
+
+  return (
+      <div style={s.progressWrap}>
+        {/* Mode badge */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <span style={{
+          ...s.uploadModeBadge,
+          background: progress.isMultipart ? "#059669" + "22" : "#64748b22",
+          color:      progress.isMultipart ? "#059669"        : "#64748b",
+          borderColor:progress.isMultipart ? "#059669" + "44" : "#64748b44",
+        }}>
+          {progress.isMultipart ? "⚡ Multipart" : "→ Single PUT"}
+        </span>
+          <span style={{ fontSize: 11, fontFamily: "monospace", color }}>
+          {progress.done ? "✓ Done" : progress.error ? "✗ Failed" : `${pct.toFixed(0)}%`}
+        </span>
+        </div>
+
+        {/* Progress bar */}
+        <div style={s.progressBarWrap}>
+          <div style={{ ...s.progressBar, width: `${pct}%`, background: color, transition: "width .2s, background .3s" }} />
+        </div>
+
+        {/* Stats row */}
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+        <span style={{ fontSize: 11, color: "#64748b" }}>
+          {formatBytes(progress.loaded)} / {formatBytes(progress.total)}
+        </span>
+          {progress.isMultipart && progress.part && (
+              <span style={{ fontSize: 11, color: "#059669", fontWeight: 600 }}>
+            Part {progress.part}
+          </span>
+          )}
+        </div>
+
+        {/* Multipart explanation shown during upload */}
+        {progress.isMultipart && !progress.done && !progress.error && (
+            <p style={{ fontSize: 11, color: "#64748b", marginTop: 8, lineHeight: 1.5 }}>
+              File is being split into chunks and uploaded simultaneously to MinIO.
+            </p>
+        )}
+
+        {progress.error && (
+            <p style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{progress.error}</p>
+        )}
+      </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NODE STATUS PANEL (unchanged)
 ═══════════════════════════════════════════════════════════ */
 function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | null; onOpenConcept: (id: ConceptId) => void }) {
   if (!cluster) {
@@ -518,9 +674,7 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
                       "All nodes down — cluster offline";
 
   const statusColor =
-      upCount === 4 ? "#10b981" :
-          upCount === 3 ? "#f97316" :
-              upCount === 2 ? "#f97316" : "#ef4444";
+      upCount === 4 ? "#10b981" : upCount === 3 ? "#f97316" : upCount === 2 ? "#f97316" : "#ef4444";
 
   const shardMeta = [
     { label: "D1", color: "#059669", title: "Data shard 1"   },
@@ -539,7 +693,6 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
           </div>
           <button style={s.ecLearnBtn} onClick={() => onOpenConcept("erasure-coding")}>How it works ↗</button>
         </div>
-
         <div style={s.ecNodeRow}>
           {nodes.map((node, i) => {
             const meta = shardMeta[i];
@@ -556,7 +709,6 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
             );
           })}
         </div>
-
         <div style={{ ...s.ecStatusBar, borderColor: statusColor + "44", background: statusColor + "11" }}>
           <div style={{ ...s.ecStatusDot, background: statusColor, boxShadow: `0 0 6px ${statusColor}66` }} />
           <span style={{ ...s.ecStatusMsg, color: statusColor }}>{statusMsg}</span>
@@ -565,7 +717,6 @@ function NodeStatusPanel({ cluster, onOpenConcept }: { cluster: ClusterHealth | 
             <span style={{ ...s.ecQuorumBadge, background: canWrite ? "#d1fae5" : "#fee2e2", color: canWrite ? "#059669" : "#dc2626" }}>Write {canWrite ? "✓" : "✗"}</span>
           </div>
         </div>
-
         <p style={s.ecHint}>
           Demo: run <code style={s.ecHintCode}>docker compose stop minio3</code> in a terminal and watch this panel update.
         </p>
@@ -679,7 +830,6 @@ function UrlPart({ color, label, value, note }: { color: string; label: string; 
 function TileTimer({ url }: { url: string }) {
   const parsed = parsePresignedUrl(url);
   const [secs, setSecs] = useState(0);
-
   useEffect(() => {
     if (!parsed) return;
     const signedAt = parseAmzDate(parsed.date);
@@ -691,14 +841,12 @@ function TileTimer({ url }: { url: string }) {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [url]);
-
   if (!parsed) return null;
   const total = parseInt(parsed.expiry);
   const pct   = total > 0 ? secs / total : 0;
   const color = pct > 0.5 ? "#10b981" : pct > 0.2 ? "#f97316" : "#ef4444";
-
   return (
-    <span style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 700, color, flexShrink: 0, whiteSpace: "nowrap" as const }}>
+      <span style={{ fontSize: 10, fontFamily: "monospace", fontWeight: 700, color, flexShrink: 0, whiteSpace: "nowrap" as const }}>
       {secs > 0 ? `${secs}s` : "exp"}
     </span>
   );
@@ -735,91 +883,93 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
 
         <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#059669">
           <p>A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things: bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are just two strings that share a prefix.</p>
-          <p>The "folder" the MinIO console draws for <code>2024/</code> is invented by the UI. ListObjectsV2 lets you filter by prefix to simulate folders, but the storage layer is flat.</p>
-          <CodeBlock>{`// What the backend runs every time you open the Gallery tab:
-const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" }));
-// Each entry: { Key, Size, ETag, LastModified }
-// Key examples: "1719000000-cat.jpg"  "1719000001-dog.png"`}</CodeBlock>
-          <InfoBox>In the gallery, click any image. The <strong>Object key</strong> row in the metadata panel shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
+          <CodeBlock>{`const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" }));
+// Each entry: { Key, Size, ETag, LastModified }`}</CodeBlock>
+          <InfoBox>Click any image in the gallery. The <strong>Object key</strong> row shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
         </ConceptCard>
 
         <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#10b981">
-          <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string — MinIO verifies it without storing any session.</p>
-          <p>The browser loads images <strong>directly from MinIO</strong> — the Express server is not in the transfer loop. Change one character in the URL and the signature check fails with a 403.</p>
+          <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string.</p>
           <CodeBlock>{`const url = await getSignedUrl(
   s3,
-  new GetObjectCommand({ Bucket: BUCKET, Key: "1719000000-cat.jpg" }),
+  new GetObjectCommand({ Bucket: BUCKET, Key: "photo.jpg" }),
   { expiresIn: 30 }    // set via the slider in the Gallery tab
-);
-// → http://localhost:9000/workshop-images/1719000000-cat.jpg
-//     ?X-Amz-Expires=30&X-Amz-Signature=a3f8b2…`}</CodeBlock>
-          <InfoBox>
-            Use the expiry slider in the Gallery tab to set a short window, upload an image, click ↗ to open it in a new tab — then wait for the timer to hit zero and refresh that tab to get a 403.
-          </InfoBox>
+);`}</CodeBlock>
+          <InfoBox>Use the expiry slider, upload an image, click ↗ to open it in a new tab — then wait for the timer to hit zero and refresh that tab to get a 403.</InfoBox>
         </ConceptCard>
 
         <ConceptCard id="concept-direct-upload" badge="03" title="Direct Upload — Presigned PUT" tagline="Backend as keyholder, not middleman" color="#f97316" exerciseBadge={{ completed: exerciseCompleted }}>
-          <p>A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the browser uploads straight to MinIO. The server never touches the file bytes — it only holds the secret key and uses it to sign requests.</p>
-          <CodeBlock>{`// Via server (default tab):
-Browser ──POST /upload──▶ Backend ──PutObject──▶ MinIO
-         (file bytes flow through Express)
-
-// Direct upload ("Direct to MinIO" tab):
-Browser ──GET /presign-upload──▶ Backend   ← only a tiny JSON response
-Browser ──PUT {signed URL}────────────────▶ MinIO   ← file bytes go here directly`}</CodeBlock>
-          <p>The backend is the <strong>keyholder</strong>: it holds the MinIO credentials and uses them only to sign URLs. The browser never sees a secret key — only a time-limited signed URL that MinIO will accept.</p>
-          <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. When you pick a file, the app asks the backend for a signed PUT URL and shows it in the flow diagram before you upload. The PUT goes straight to <code>:9000</code>.</InfoBox>
+          <p>A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the browser uploads straight to MinIO. The server never touches the file bytes.</p>
+          <CodeBlock>{`// Via server:  Browser → Express → MinIO  (bytes go through Express)
+// Direct:      Browser → MinIO            (bytes skip Express entirely)
+//              Express only signs a URL — one tiny JSON response`}</CodeBlock>
+          <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. Pick a file to see the signed PUT URL before you upload.</InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-s3" badge="04" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#10b981">
-          <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
-          <CodeBlock>{`// Dev (MinIO in Docker):
-const s3 = new S3Client({
-  endpoint:        "http://localhost:9000",   // ← the only line that changes
-  forcePathStyle:  true,
-  credentials:     { accessKeyId: "minioadmin", secretAccessKey: "minioadmin" },
+        <ConceptCard id="concept-multipart" badge="04" title="Multipart Upload" tagline="Large files in parallel chunks" color="#8b5cf6">
+          <p>
+            For files above the threshold, <code>@aws-sdk/lib-storage</code> automatically splits the file into parts
+            and uploads them concurrently. MinIO assembles the parts atomically — if the upload fails partway through,
+            only the failed parts need to be retried, not the whole file.
+          </p>
+          <CodeBlock>{`const managed = new Upload({
+  client:    s3,
+  queueSize: 4,          // 4 parts uploading simultaneously
+  partSize:  threshold,  // set by the slider in MB
+  params: {
+    Bucket: BUCKET, Key: key,
+    Body:   fileBuffer,
+    Tagging: "upload-mode=multipart",   // object tag applied automatically
+  },
 });
 
-// Production (AWS S3) — everything else stays the same:
-const s3 = new S3Client({
-  region:      "us-east-1",
-  credentials: { accessKeyId: process.env.AWS_KEY, secretAccessKey: process.env.AWS_SECRET },
-});`}</CodeBlock>
-          <p>The same swap works for Cloudflare R2, Backblaze B2, or any S3-compatible store. You are coding against an open standard, not a proprietary SDK.</p>
+managed.on("httpUploadProgress", (p) => {
+  console.log(\`Part \${p.part}: \${p.loaded} / \${p.total} bytes\`);
+});
+
+await managed.done();   // MinIO assembles all parts here`}</CodeBlock>
+          <p>
+            The <strong>multipart threshold slider</strong> in the Gallery tab controls when this kicks in.
+            Lower it to 1 MB to see chunking on small test files. Raise it to test single PUT on large files.
+          </p>
+          <InfoBox>
+            Upload a file in "Via Server" mode. The progress bar shows "⚡ Multipart" or "→ Single PUT" depending on whether your file meets the threshold. Part numbers appear in real time as each chunk lands.
+          </InfoBox>
         </ConceptCard>
 
-        <ConceptCard id="concept-erasure" badge="05" title="Erasure Coding" tagline="Survive node failures without full copies" color="#ef4444">
-          <p>Instead of copying the entire file to every node (which costs 4× the storage), MinIO uses <strong>Reed-Solomon erasure coding</strong> to split each object into shards. With a 4-node cluster and the default EC:2, every object becomes <strong>2 data shards + 2 parity shards</strong>. Any 2 shards are enough to reconstruct the full object.</p>
-          <CodeBlock>{`4-node cluster, EC:2 (default for 4 drives):
+        <ConceptCard id="concept-s3" badge="05" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#10b981">
+          <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
+          <CodeBlock>{`// Dev (MinIO in Docker) — the only line that changes:
+endpoint: "http://localhost:9000"
 
-  Node 1  →  Data shard 1    (¼ of the object's data)
-  Node 2  →  Data shard 2    (¼ of the object's data)
-  Node 3  →  Parity shard 1  (mathematically derived from D1+D2)
-  Node 4  →  Parity shard 2  (mathematically derived from D1+D2)
+// Production (AWS S3):
+region: "us-east-1"   // no endpoint needed — SDK knows where to go`}</CodeBlock>
+        </ConceptCard>
 
-  Read  quorum: 2 nodes  — any 2 shards reconstruct the full object
-  Write quorum: 3 nodes  — need 3 online to commit a new write safely
+        <ConceptCard id="concept-erasure" badge="06" title="Erasure Coding" tagline="Survive node failures without full copies" color="#ef4444">
+          <p>MinIO uses <strong>Reed-Solomon erasure coding</strong> to split each object into shards. With EC:2 across 4 nodes: 2 data shards + 2 parity shards. Any 2 shards reconstruct the full object.</p>
+          <CodeBlock>{`Node 1 → Data shard 1     Node 3 → Parity shard 1
+Node 2 → Data shard 2     Node 4 → Parity shard 2
 
-  Storage overhead: 2× (not 4× like full replication)
-  Failure tolerance: lose any 2 nodes — data survives`}</CodeBlock>
-          <p>The parity shards are computed with XOR-based arithmetic (Reed-Solomon). If node 3 disappears, MinIO can recompute parity shard 1 from data shards 1 and 2.</p>
+Read quorum:  2 nodes   Write quorum: 3 nodes
+Storage cost: 2× (not 4× like full replication)`}</CodeBlock>
           <InfoBox>
-            Live demo: run <code>docker compose stop minio3</code> in a terminal — the panel turns orange but the gallery still loads. Run <code>docker compose stop minio4</code> as well — two nodes down, reads still work (read quorum = 2). Try uploading — it fails (write quorum = 3). Run <code>docker compose start minio3</code> and uploads are restored.
+            Run <code>docker compose stop minio3</code> — the panel turns orange but the gallery loads. Stop minio4 too — reads still work, uploads fail. Start minio3 and uploads restore.
           </InfoBox>
         </ConceptCard>
 
         <div style={s.gtkStrip}>
           <span style={s.gtkHeader}>Good to know</span>
-          <GtkItem text="ETag = MD5 hash of the bytes — MinIO returns it on every object and you can use it as a cache fingerprint or deduplication key." />
-          <GtkItem text="Objects are immutable: you replace rather than edit. Lifecycle rules can auto-expire objects after N days to reclaim space." />
+          <GtkItem text="ETag = MD5 hash of the bytes — use it as a cache fingerprint or deduplication key." />
+          <GtkItem text="Objects are immutable: you replace rather than edit. Lifecycle rules auto-expire objects after N days." />
+          <GtkItem text="Object tagging: every upload in this app applies upload-mode=multipart or upload-mode=single-put as a tag, visible in the MinIO console under object properties." />
+          <GtkItem text="Bucket lifecycle: this project sets a 1-day expiry rule on the bucket at startup — objects auto-delete after 24 hours to keep the demo clean." />
           <GtkItem text="Versioning keeps every overwrite as a new version with its own version ID — deletes create a marker rather than destroying data." />
-          <GtkItem text="Bucket policies are JSON access rules. Buckets are private by default; presigned URLs grant temporary exceptions without making the bucket public." />
-          <GtkItem text="Erasure coding runs automatically — no configuration needed beyond having 4+ drives. MinIO picks EC:2 for a 4-drive cluster by default." />
         </div>
 
         <div style={s.learnFooter}>
           <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>
-            All five concepts are active right now — the Gallery tab is talking to a live 4-node MinIO cluster via Docker.
+            All concepts are active right now — the Gallery tab is talking to a live 4-node MinIO cluster via Docker.
           </p>
         </div>
       </div>
@@ -838,9 +988,7 @@ function CoreIdea({ title, text }: { title: string; text: string }) {
 
 function GtkItem({ text }: { text: string }) {
   return (
-      <p style={s.gtkItem}>
-        <span style={s.gtkDot}>·</span>{text}
-      </p>
+      <p style={s.gtkItem}><span style={s.gtkDot}>·</span>{text}</p>
   );
 }
 
@@ -888,22 +1036,18 @@ function InfoBox({ children }: { children: React.ReactNode }) {
 const globalCss = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #f8fafc; }
-
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes highlightPulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
     40%       { box-shadow: 0 0 0 6px rgba(16,185,129,0.3); }
   }
-
   .gallery-tile { transition: transform .15s, box-shadow .15s; cursor: pointer; }
   .gallery-tile:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
   .tile-open-btn { opacity: 0; transition: opacity .15s; }
   .gallery-tile:hover .tile-open-btn { opacity: 1; }
-
   .concept-card { animation: fadeIn .3s ease both; }
   .concept-highlight { animation: highlightPulse .6s ease 2; }
-
   ul, ol { padding-left: 20px; }
   li { margin-bottom: 4px; font-size: 13px; color: #374151; line-height: 1.6; }
   p  { font-size: 14px; color: #374151; line-height: 1.7; margin-bottom: 12px; }
@@ -914,8 +1058,6 @@ const globalCss = `
 
 const s: Record<string, React.CSSProperties> = {
   root: { minHeight: "100vh", fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", background: "#f8fafc", color: "#0f172a" },
-
-  /* nav */
   nav:          { background: "#ffffff", borderBottom: "1px solid #e2e8f0", position: "sticky", top: 0, zIndex: 50 },
   navInner:     { maxWidth: 1080, margin: "0 auto", padding: "0 24px", height: 56, display: "flex", alignItems: "center", justifyContent: "space-between" },
   navBrand:     { display: "flex", alignItems: "center", gap: 10 },
@@ -925,54 +1067,53 @@ const s: Record<string, React.CSSProperties> = {
   navTabs:      { display: "flex", gap: 4 },
   navTab:       { background: "transparent", border: "1px solid transparent", borderRadius: 8, padding: "6px 16px", fontSize: 13, color: "#64748b", cursor: "pointer", fontWeight: 500 },
   navTabActive: { background: "#f1f5f9", borderColor: "#e2e8f0", color: "#0f172a" },
-
-  /* page layout */
   pageWrap: { maxWidth: 1080, margin: "0 auto", padding: "0 24px 40px" },
   twoCol:   { display: "flex", gap: 24, paddingTop: 20, alignItems: "flex-start" },
-
-  /* insight ribbon */
   ribbon:      { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, marginTop: 12, flexWrap: "wrap" as const },
   ribbonLabel: { fontSize: 11, fontWeight: 600, color: "#059669", textTransform: "uppercase" as const, letterSpacing: ".5px", whiteSpace: "nowrap" as const },
   ribbonChip:  { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 20, fontSize: 12, fontWeight: 500, color: "#059669", cursor: "pointer" },
   chipDot:     { width: 6, height: 6, borderRadius: "50%", background: "#10b981" },
   chipArrow:   { fontSize: 10, opacity: 0.6 },
-
-  /* sidebar */
   sidebar:      { width: 320, flexShrink: 0, display: "flex", flexDirection: "column" as const, gap: 20 },
   sectionTitle: { fontSize: 13, fontWeight: 700, color: "#64748b", textTransform: "uppercase" as const, letterSpacing: ".06em", marginBottom: 12 },
-
-  /* mode toggle */
   modeToggle:    { display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, gap: 4, border: "1px solid #e2e8f0" },
   modeBtn:       { flex: 1, padding: "8px 10px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 7, cursor: "pointer", background: "transparent", color: "#64748b" },
   modeBtnActive: { background: "#ffffff", color: "#0f172a", boxShadow: "0 1px 3px rgba(0,0,0,.1)" },
 
-  /* drop zone */
-  dropZone:        { border: "2px dashed #e2e8f0", borderRadius: 14, padding: "40px 28px", textAlign: "center" as const, cursor: "pointer", background: "#f8fafc", transition: "all .15s", minHeight: 160 },
+  /* multipart threshold slider card */
+  sliderCard:       { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" },
+  sliderCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  sliderCardTitle:  { fontSize: 12, fontWeight: 700, color: "#0f172a" },
+  sliderCardValue:  { fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: "#059669" },
+  sliderCardHint:   { fontSize: 11, color: "#64748b", marginTop: 8, lineHeight: 1.5 },
+  sliderLearnLink:  { background: "none", border: "none", cursor: "pointer", color: "#059669", fontSize: 11, padding: "0 0 0 4px", fontWeight: 600 },
+
+  dropZone:        { border: "2px dashed #e2e8f0", borderRadius: 14, padding: "28px 28px", textAlign: "center" as const, cursor: "pointer", background: "#f8fafc", transition: "all .15s", minHeight: 140 },
   dropZoneActive:  { borderColor: "#059669", background: "#ecfdf5" },
   dropIconWrap:    { display: "flex", justifyContent: "center", marginBottom: 14 },
   dropText:        { fontSize: 14, color: "#64748b", marginBottom: 6 },
   dropSub:         { fontSize: 12, color: "#94a3b8" },
-  spinnerWrap:     { display: "flex", justifyContent: "center", padding: "16px 0" },
+  spinnerWrap:     { display: "flex", justifyContent: "center", padding: "8px 0" },
   spinner:         { width: 30, height: 30, border: "3px solid #e2e8f0", borderTopColor: "#10b981", borderRadius: "50%", animation: "spin .7s linear infinite" },
   uploadDirectBtn: { padding: "10px 20px", background: "#059669", color: "#ffffff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 14, fontWeight: 600 },
 
-  /* direct upload panel */
+  /* upload progress */
+  progressWrap:    { padding: "4px 0", width: "100%" },
+  progressBarWrap: { height: 8, background: "#e2e8f0", borderRadius: 8, overflow: "hidden" },
+  progressBar:     { height: "100%", borderRadius: 8 },
+  uploadModeBadge: { fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, border: "1px solid" },
+
   directPanel:  { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column" as const, gap: 14 },
   directLabel:  { fontSize: 11, fontWeight: 700, color: "#f97316", textTransform: "uppercase" as const, letterSpacing: ".5px" },
   directUrlBox: { fontFamily: "monospace", fontSize: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid #e2e8f0", background: "#f8fafc", resize: "none" as const, color: "#374151", lineHeight: 1.6, width: "100%" },
   flowDiagram:  { background: "#f8fafc", borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column" as const, gap: 6 },
-
-  /* exercise panel */
   exercisePanel:      { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 20px" },
   exercisePanelTitle: { fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 14 },
   exerciseList:       { paddingLeft: 20, display: "flex", flexDirection: "column" as const, gap: 8 },
   exerciseHint:       { fontSize: 12, color: "#64748b", marginTop: 12, marginBottom: 6 },
   exerciseDone:       { fontSize: 12, color: "#059669", fontWeight: 600, margin: 0 },
   inlineCode:         { background: "#f1f5f9", padding: "2px 5px", borderRadius: 3, fontFamily: "monospace", fontSize: 11, color: "#059669", border: "1px solid #e2e8f0" },
-
   statusBar: { padding: "10px 14px", borderRadius: 8, border: "1px solid" },
-
-  /* presigned URL reveal */
   psuRoot:           { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden" },
   psuHeader:         { display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderBottom: "1px solid #e2e8f0" },
   psuThumb:          { width: 36, height: 36, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#f1f5f9" },
@@ -995,19 +1136,15 @@ const s: Record<string, React.CSSProperties> = {
   psuRawWrap:        { display: "flex", gap: 6, alignItems: "flex-start", marginTop: 4 },
   psuRawBox:         { flex: 1, fontFamily: "monospace", fontSize: 10, padding: "7px 8px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", resize: "none" as const, color: "#64748b", lineHeight: 1.5 },
   psuCopyBtn:        { background: "#059669", color: "#ffffff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const, flexShrink: 0 },
-
   statRow: { display: "flex", gap: 16, padding: "16px 0", borderTop: "1px solid #e2e8f0" },
   stat:    { flex: 1, display: "flex", flexDirection: "column" as const, gap: 2 },
   statVal: { fontSize: 22, fontWeight: 700, color: "#0f172a", lineHeight: 1 },
   statKey: { fontSize: 11, color: "#94a3b8" },
-
-  /* gallery */
   galleryArea:     { flex: 1, minWidth: 0 },
   galleryTopBar:   { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   galleryControls: { display: "flex", alignItems: "center", gap: 10 },
   sliderLabel:     { fontSize: 11, color: "#64748b", whiteSpace: "nowrap" as const },
   sliderValue:     { fontSize: 11, fontFamily: "monospace", color: "#10b981", minWidth: 36, textAlign: "right" as const },
-  refreshBtn:      { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 12px", fontSize: 16, cursor: "pointer", color: "#64748b", lineHeight: 1 },
   empty:           { textAlign: "center" as const, padding: "60px 0" },
   grid:            { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 },
   tile:            { borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", background: "#ffffff" },
@@ -1017,8 +1154,6 @@ const s: Record<string, React.CSSProperties> = {
   tileCaption:     { padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 },
   tileFilename:    { fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 },
   tileMeta:        { fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" as const, flexShrink: 0 },
-
-  /* modal */
   overlay:      { position: "fixed" as const, inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 24 },
   modal:        { background: "#ffffff", borderRadius: 16, overflow: "hidden", maxWidth: 920, width: "100%", position: "relative" as const, boxShadow: "0 24px 60px rgba(0,0,0,.12)", border: "1px solid #e2e8f0", display: "flex" as const },
   modalClose:   { position: "absolute" as const, top: 14, right: 14, background: "rgba(0,0,0,.08)", border: "none", color: "#374151", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 },
@@ -1033,8 +1168,6 @@ const s: Record<string, React.CSSProperties> = {
   modalActions: { display: "flex", flexDirection: "column" as const, gap: 8, marginTop: "auto" as const, paddingTop: 14 },
   openBtn:      { width: "100%", padding: "10px 0", background: "#059669", color: "#ffffff", border: "1px solid #10b98133", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
   deleteBtn:    { width: "100%", padding: "10px 0", background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a544", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-
-  /* shard distribution */
   shardSection: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", marginBottom: 0 },
   shardTitle:   { fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 10 },
   shardGrid:    { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10 },
@@ -1044,8 +1177,6 @@ const s: Record<string, React.CSSProperties> = {
   shardRole:    { fontSize: 10, fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: ".04em", transition: "color .4s" },
   shardStatus:  { fontSize: 14, lineHeight: 1, transition: "color .4s" },
   shardNote:    { fontSize: 11, color: "#64748b", lineHeight: 1.5, margin: 0 },
-
-  /* erasure coding panel */
   ecPanel:         { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "16px 20px", display: "flex", flexDirection: "column" as const, gap: 12 },
   ecPanelHeader:   { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
   ecTitle:         { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const },
@@ -1066,22 +1197,16 @@ const s: Record<string, React.CSSProperties> = {
   ecQuorumBadge:   { fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99 },
   ecHint:          { fontSize: 11, color: "#94a3b8", margin: 0, lineHeight: 1.6 },
   ecHintCode:      { background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: 11, color: "#059669", border: "1px solid #e2e8f0" },
-
-  /* learn page */
   learnWrap:     { maxWidth: 760, margin: "0 auto", padding: "40px 24px 60px" },
   learnHeader:   { marginBottom: 32 },
   learnH1:       { fontSize: 32, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.8px", marginBottom: 8 },
   learnSubtitle: { fontSize: 16, color: "#64748b" },
-
-  /* core ideas block */
   coreBlock:      { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 14, padding: "24px 28px", marginBottom: 28 },
   coreBlockLabel: { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".8px", marginBottom: 16 },
   coreGrid:       { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20 },
   coreIdea:       { display: "flex", flexDirection: "column" as const, gap: 6 },
   coreIdeaTitle:  { fontSize: 13, fontWeight: 700, color: "#0f172a", margin: 0 },
   coreIdeaText:   { fontSize: 12, color: "#64748b", lineHeight: 1.65, margin: 0 },
-
-  /* concept cards */
   conceptCard:   { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, marginBottom: 20, overflow: "hidden", scrollMarginTop: 80 },
   conceptHeader: { display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", borderBottom: "1px solid #e2e8f0", position: "relative" as const, overflow: "hidden" },
   conceptAccent: { position: "absolute" as const, right: 0, top: 0, width: 4, height: "100%", opacity: 0.6 },
@@ -1089,16 +1214,12 @@ const s: Record<string, React.CSSProperties> = {
   conceptTitle:  { fontSize: 18, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.3px" },
   conceptTagline:{ fontSize: 12, fontWeight: 500, marginTop: 1 },
   conceptBody:   { padding: "20px 24px", display: "flex", flexDirection: "column" as const, gap: 12 },
-
   exBadgePending: { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0", whiteSpace: "nowrap" as const, flexShrink: 0 },
   exBadgeDone:    { fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 20, background: "#d1fae5", color: "#059669", whiteSpace: "nowrap" as const, flexShrink: 0 },
-
-  /* good to know */
   gtkStrip:  { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "18px 22px", marginBottom: 24, display: "flex", flexDirection: "column" as const, gap: 10 },
   gtkHeader: { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase" as const, letterSpacing: ".8px" },
   gtkItem:   { fontSize: 13, color: "#64748b", lineHeight: 1.6, margin: 0, display: "flex", gap: 8 },
   gtkDot:    { color: "#cbd5e1", flexShrink: 0, marginTop: 1 },
-
   codeBlock:   { background: "#1e293b", color: "#e2e8f0", padding: "14px 16px", borderRadius: 8, overflowX: "auto" as const, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre" as const, border: "1px solid #334155" },
   infoBox:     { display: "flex", gap: 10, alignItems: "flex-start", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: "12px 14px" },
   infoBoxIcon: { fontSize: 16, flexShrink: 0 },
