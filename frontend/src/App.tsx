@@ -883,38 +883,74 @@ function LearnPage({ exerciseCompleted }: { exerciseCompleted: boolean }) {
           </div>
         </div>
 
-        <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#059669">
-          <p>A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things: bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are just two strings that share a prefix.</p>
-          <CodeBlock>{`const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" }));
+        {/* Rows 1–2: 01/02 and 03/04 — each pair stretches to equal height */}
+        <div style={s.conceptGrid}>
+          <ConceptCard id="concept-buckets" badge="01" title="Buckets & Objects" tagline="Flat key-value store" color="#059669">
+            <p>A <strong>bucket</strong> is a flat namespace. Every file you upload becomes an <strong>object</strong> with three things: bytes, a key, and metadata. There is no directory tree — <code>2024/photo.png</code> and <code>2024/other.png</code> are just two strings that share a prefix.</p>
+            <CodeBlock>{`const list = await s3.send(new ListObjectsV2Command({ Bucket: "workshop-images" }));
 // Each entry: { Key, Size, ETag, LastModified }`}</CodeBlock>
-          <InfoBox>Click any image in the gallery. The <strong>Object key</strong> row shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
-        </ConceptCard>
+            <InfoBox>Click any image in the gallery. The <strong>Object key</strong> row shows the full key MinIO uses — no folder, just a timestamp-prefixed string.</InfoBox>
+          </ConceptCard>
 
-        <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#059669">
-          <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string.</p>
-          <CodeBlock>{`const url = await getSignedUrl(
+          <ConceptCard id="concept-presigned" badge="02" title="Presigned GET URLs" tagline="Temporary, unforgeable read links" color="#059669">
+            <p>After listing objects, the backend calls <code>getSignedUrl</code> for each key. The result is a normal HTTPS URL with an HMAC-SHA256 signature baked into the query string.</p>
+            <CodeBlock>{`const url = await getSignedUrl(
   s3,
   new GetObjectCommand({ Bucket: BUCKET, Key: "photo.jpg" }),
   { expiresIn: 30 }    // set via the slider in the Gallery tab
 );`}</CodeBlock>
-          <InfoBox>Use the expiry slider, upload an image, click ↗ to open it in a new tab — then wait for the timer to hit zero and refresh that tab to get a 403.</InfoBox>
-        </ConceptCard>
+            <InfoBox>Use the expiry slider, upload an image, click ↗ to open it in a new tab — then wait for the timer to hit zero and refresh that tab to get a 403.</InfoBox>
+          </ConceptCard>
 
-        <ConceptCard id="concept-direct-upload" badge="03" title="Direct Upload — Presigned PUT" tagline="Backend as keyholder, not middleman" color="#059669" exerciseBadge={{ completed: exerciseCompleted }}>
-          <p>A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the browser uploads straight to MinIO. The server never touches the file bytes.</p>
-          <CodeBlock>{`// Via server:  Browser → Express → MinIO  (bytes go through Express)
+          <ConceptCard id="concept-s3" badge="03" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#059669">
+            <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
+            <CodeBlock>{`// Dev (MinIO in Docker) — the only line that changes:
+endpoint: "http://localhost:9000"
+
+// Production (AWS S3):
+region: "us-east-1"   // no endpoint needed — SDK knows where to go`}</CodeBlock>
+          </ConceptCard>
+
+          <ConceptCard id="concept-erasure" badge="04" title="Erasure Coding" tagline="Survive node failures without full copies" color="#059669">
+            <p>MinIO uses <strong>Reed-Solomon erasure coding</strong> to split each object into shards. With EC:2 across 4 nodes: 2 data shards + 2 parity shards. Any 2 shards reconstruct the full object.</p>
+            <CodeBlock>{`Node 1 → Data shard 1     Node 3 → Parity shard 1
+Node 2 → Data shard 2     Node 4 → Parity shard 2
+
+Read quorum:  2 nodes   Write quorum: 3 nodes
+Storage cost: 2× (not 4× like full replication)`}</CodeBlock>
+            <InfoBox>
+              Run <code>docker compose stop minio3</code> — the panel turns orange but the gallery loads. Stop minio4 too — reads still work, uploads fail. Start minio3 and uploads restore.
+            </InfoBox>
+          </ConceptCard>
+        </div>
+
+        {/* Row 3: left=[05 + GtK stacked], right=[06] — both sides same total height */}
+        <div style={s.conceptGridBottom}>
+          <div style={s.conceptLeftCol}>
+            <ConceptCard id="concept-direct-upload" badge="05" title="Direct Upload — Presigned PUT" tagline="Backend as keyholder, not middleman" color="#059669" exerciseBadge={{ completed: exerciseCompleted }}>
+              <p>A presigned URL works for <em>writes</em> too. The backend signs a PUT URL and returns it; the browser uploads straight to MinIO. The server never touches the file bytes.</p>
+              <CodeBlock>{`// Via server:  Browser → Express → MinIO  (bytes go through Express)
 // Direct:      Browser → MinIO            (bytes skip Express entirely)
 //              Express only signs a URL — one tiny JSON response`}</CodeBlock>
-          <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. Pick a file to see the signed PUT URL before you upload.</InfoBox>
-        </ConceptCard>
+              <InfoBox>Switch to "Direct to MinIO" in the Gallery tab. Pick a file to see the signed PUT URL before you upload.</InfoBox>
+            </ConceptCard>
+            <div style={{ ...s.gtkStrip, flex: 1 }}>
+              <span style={s.gtkHeader}>Good to know</span>
+              <GtkItem text="ETag = MD5 hash of the bytes — use it as a cache fingerprint or deduplication key." />
+              <GtkItem text="Objects are immutable: you replace rather than edit. Lifecycle rules auto-expire objects after N days." />
+              <GtkItem text="Object tagging: every upload in this app applies upload-mode=multipart or upload-mode=single-put as a tag, visible in the MinIO console under object properties." />
+              <GtkItem text="Bucket lifecycle: this project sets a 1-day expiry rule on the bucket at startup — objects auto-delete after 24 hours to keep the demo clean." />
+              <GtkItem text="Versioning keeps every overwrite as a new version with its own version ID — deletes create a marker rather than destroying data." />
+            </div>
+          </div>
 
-        <ConceptCard id="concept-multipart" badge="04" title="Multipart Upload" tagline="Large files in parallel chunks" color="#059669">
-          <p>
-            For files above the threshold, <code>@aws-sdk/lib-storage</code> automatically splits the file into parts
-            and uploads them concurrently. MinIO assembles the parts atomically — if the upload fails partway through,
-            only the failed parts need to be retried, not the whole file.
-          </p>
-          <CodeBlock>{`const managed = new Upload({
+          <ConceptCard id="concept-multipart" badge="06" title="Multipart Upload" tagline="Large files in parallel chunks" color="#059669">
+            <p>
+              For files above the threshold, <code>@aws-sdk/lib-storage</code> automatically splits the file into parts
+              and uploads them concurrently. MinIO assembles the parts atomically — if the upload fails partway through,
+              only the failed parts need to be retried, not the whole file.
+            </p>
+            <CodeBlock>{`const managed = new Upload({
   client:    s3,
   queueSize: 4,          // 4 parts uploading simultaneously
   partSize:  threshold,  // set by the slider in MB (minimum 5 MB — MinIO hard floor)
@@ -930,44 +966,15 @@ managed.on("httpUploadProgress", (p) => {
 });
 
 await managed.done();   // MinIO assembles all parts here`}</CodeBlock>
-          <p>
-            The <strong>multipart threshold slider</strong> in the Gallery tab controls when this kicks in (minimum 5 MB).
-            Files under 5 MB always use a single PUT — MinIO enforces a 5 MB minimum per part.
-            Use a file above your slider value to see chunked uploading in action.
-          </p>
-          <InfoBox>
-            Upload a file in "Via Server" mode. The progress bar shows "⚡ Multipart" or "→ Single PUT" depending on whether your file meets the threshold. Part numbers appear in real time as each chunk lands.
-          </InfoBox>
-        </ConceptCard>
-
-        <ConceptCard id="concept-s3" badge="05" title="S3 API Compatibility" tagline="One SDK, any vendor" color="#059669">
-          <p>Amazon S3 defined a standard REST API for object storage. MinIO implements that exact API. The AWS SDK in this project talks to MinIO identically to how it talks to real AWS S3.</p>
-          <CodeBlock>{`// Dev (MinIO in Docker) — the only line that changes:
-endpoint: "http://localhost:9000"
-
-// Production (AWS S3):
-region: "us-east-1"   // no endpoint needed — SDK knows where to go`}</CodeBlock>
-        </ConceptCard>
-
-        <ConceptCard id="concept-erasure" badge="06" title="Erasure Coding" tagline="Survive node failures without full copies" color="#059669">
-          <p>MinIO uses <strong>Reed-Solomon erasure coding</strong> to split each object into shards. With EC:2 across 4 nodes: 2 data shards + 2 parity shards. Any 2 shards reconstruct the full object.</p>
-          <CodeBlock>{`Node 1 → Data shard 1     Node 3 → Parity shard 1
-Node 2 → Data shard 2     Node 4 → Parity shard 2
-
-Read quorum:  2 nodes   Write quorum: 3 nodes
-Storage cost: 2× (not 4× like full replication)`}</CodeBlock>
-          <InfoBox>
-            Run <code>docker compose stop minio3</code> — the panel turns orange but the gallery loads. Stop minio4 too — reads still work, uploads fail. Start minio3 and uploads restore.
-          </InfoBox>
-        </ConceptCard>
-
-        <div style={s.gtkStrip}>
-          <span style={s.gtkHeader}>Good to know</span>
-          <GtkItem text="ETag = MD5 hash of the bytes — use it as a cache fingerprint or deduplication key." />
-          <GtkItem text="Objects are immutable: you replace rather than edit. Lifecycle rules auto-expire objects after N days." />
-          <GtkItem text="Object tagging: every upload in this app applies upload-mode=multipart or upload-mode=single-put as a tag, visible in the MinIO console under object properties." />
-          <GtkItem text="Bucket lifecycle: this project sets a 1-day expiry rule on the bucket at startup — objects auto-delete after 24 hours to keep the demo clean." />
-          <GtkItem text="Versioning keeps every overwrite as a new version with its own version ID — deletes create a marker rather than destroying data." />
+            <p>
+              The <strong>multipart threshold slider</strong> in the Gallery tab controls when this kicks in (minimum 5 MB).
+              Files under 5 MB always use a single PUT — MinIO enforces a 5 MB minimum per part.
+              Use a file above your slider value to see chunked uploading in action.
+            </p>
+            <InfoBox>
+              Upload a file in "Via Server" mode. The progress bar shows "⚡ Multipart" or "→ Single PUT" depending on whether your file meets the threshold. Part numbers appear in real time as each chunk lands.
+            </InfoBox>
+          </ConceptCard>
         </div>
 
         <div style={s.learnFooter}>
@@ -1201,7 +1208,7 @@ const s: Record<string, React.CSSProperties> = {
   ecQuorumBadge:   { fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99 },
   ecHint:          { fontSize: 11, color: "#94a3b8", margin: 0, lineHeight: 1.6 },
   ecHintCode:      { background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace", fontSize: 11, color: "#059669", border: "1px solid #e2e8f0" },
-  learnWrap:     { maxWidth: 760, margin: "0 auto", padding: "40px 24px 60px" },
+  learnWrap:     { width: "90%", maxWidth: 1400, margin: "0 auto", padding: "40px 24px 60px" },
   learnHeader:   { marginBottom: 32 },
   learnH1:       { fontSize: 32, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.8px", marginBottom: 8 },
   learnSubtitle: { fontSize: 16, color: "#64748b" },
@@ -1211,7 +1218,10 @@ const s: Record<string, React.CSSProperties> = {
   coreIdea:       { display: "flex", flexDirection: "column" as const, gap: 6 },
   coreIdeaTitle:  { fontSize: 13, fontWeight: 700, color: "#0f172a", margin: 0 },
   coreIdeaText:   { fontSize: 12, color: "#64748b", lineHeight: 1.65, margin: 0 },
-  conceptCard:   { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, marginBottom: 20, overflow: "hidden", scrollMarginTop: 80 },
+  conceptCard:   { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, overflow: "hidden", scrollMarginTop: 80 },
+  conceptGrid:       { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 },
+  conceptGridBottom: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 },
+  conceptLeftCol:    { display: "flex", flexDirection: "column" as const, gap: 20 },
   conceptHeader: { display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", borderBottom: "1px solid #e2e8f0", position: "relative" as const, overflow: "hidden" },
   conceptAccent: { position: "absolute" as const, right: 0, top: 0, width: 4, height: "100%", opacity: 0.6 },
   conceptBadge:  { fontSize: 11, fontWeight: 800, padding: "4px 8px", borderRadius: 6, letterSpacing: ".5px", flexShrink: 0 },
