@@ -3,15 +3,19 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-  ListObjectsV2Command,
-  CreateBucketCommand,
-  HeadBucketCommand,
-  HeadObjectCommand,
-  DeleteObjectCommand,
+    S3Client,
+    GetObjectCommand,
+    ListObjectsV2Command,
+    CreateBucketCommand,
+    HeadBucketCommand,
+    HeadObjectCommand,
+    DeleteObjectCommand,
+    PutObjectCommand,
+    PutBucketTaggingCommand,
+    PutBucketLifecycleConfigurationCommand,
+    S3ServiceException,
 } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const app = express();
@@ -21,226 +25,377 @@ app.use(express.json());
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ═══════════════════════════════════════════════════════════════
-//  STORAGE PROVIDER — the only thing that changes between vendors
-//
-//  Set STORAGE_PROVIDER in .env to switch:
-//    STORAGE_PROVIDER=minio   →  local Docker cluster (default)
-//    STORAGE_PROVIDER=r2      →  Cloudflare R2
-//
-//  Every route below — upload, gallery, presigned URLs, delete —
-//  is completely unchanged. Same SDK, same commands, different config.
+//  STORAGE PROVIDER
 // ═══════════════════════════════════════════════════════════════
 
 const isR2 = process.env.STORAGE_PROVIDER === "r2";
 
 const s3 = new S3Client(
-  isR2
-    ? {
-        // Cloudflare R2
-        endpoint:    `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-        region:      "auto",
-        credentials: {
-          accessKeyId:     process.env.R2_ACCESS_KEY,
-          secretAccessKey: process.env.R2_SECRET_KEY,
-        },
-      }
-    : {
-        // MinIO (local Docker)
-        endpoint:       process.env.MINIO_ENDPOINT,
-        region:         "us-east-1",
-        credentials: {
-          accessKeyId:     process.env.MINIO_ACCESS_KEY,
-          secretAccessKey: process.env.MINIO_SECRET_KEY,
-        },
-        forcePathStyle: true,
-      }
+    isR2
+        ? {
+            endpoint:    `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+            region:      "auto",
+            credentials: {
+                accessKeyId:     process.env.R2_ACCESS_KEY,
+                secretAccessKey: process.env.R2_SECRET_KEY,
+            },
+        }
+        : {
+            endpoint:       process.env.MINIO_ENDPOINT,
+            region:         "us-east-1",
+            credentials: {
+                accessKeyId:     process.env.MINIO_ACCESS_KEY,
+                secretAccessKey: process.env.MINIO_SECRET_KEY,
+            },
+            forcePathStyle: true,
+        }
 );
 
 const BUCKET = isR2 ? process.env.R2_BUCKET : process.env.MINIO_BUCKET;
 
+// ═══════════════════════════════════════════════════════════════
+//  BUCKET SETUP — runs once on startup
+//  Creates the bucket if missing, then applies:
+//    - bucket-level tags  (object tagging demo)
+//    - lifecycle rule     (auto-expire objects after 1 day)
+// ═══════════════════════════════════════════════════════════════
+
 async function ensureBucket() {
-  try {
-    await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
-    console.log(`[${isR2 ? "R2" : "MinIO"}] Bucket "${BUCKET}" ready`);
-  } catch {
-    if (isR2) throw new Error(`R2 bucket "${BUCKET}" not found — create it in the Cloudflare dashboard first`);
-    await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
-    console.log(`[MinIO] Bucket "${BUCKET}" created`);
-  }
+    // 1 — create if missing
+    try {
+        await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
+        console.log(`[${isR2 ? "R2" : "MinIO"}] Bucket "${BUCKET}" ready`);
+    } catch {
+        if (isR2) throw new Error(`R2 bucket "${BUCKET}" not found — create it in the Cloudflare dashboard first`);
+        await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
+        console.log(`[MinIO] Bucket "${BUCKET}" created`);
+    }
+
+    // 2 — tag the bucket so it's identifiable
+    try {
+        await s3.send(new PutBucketTaggingCommand({
+            Bucket:  BUCKET,
+            Tagging: {
+                TagSet: [
+                    { Key: "project",     Value: "object-storage-workshop" },
+                    { Key: "environment", Value: "local-dev"               },
+                ],
+            },
+        }));
+        console.log(`[MinIO] Bucket tags applied`);
+    } catch (err) {
+        // Tagging failures are non-fatal — log and continue
+        console.warn(`[MinIO] Bucket tagging skipped: ${err.message}`);
+    }
+
+    // 3 — lifecycle rule: auto-delete objects after 1 day
+    //     Keeps the demo bucket clean between sessions.
+    //     MinIO honours S3 lifecycle rules on the free edition.
+    try {
+        await s3.send(new PutBucketLifecycleConfigurationCommand({
+            Bucket: BUCKET,
+            LifecycleConfiguration: {
+                Rules: [
+                    {
+                        ID:         "expire-workshop-objects",
+                        Status:     "Enabled",
+                        Filter:     { Prefix: "" },          // applies to every object
+                        Expiration: { Days: 1 },             // delete after 1 day
+                    },
+                ],
+            },
+        }));
+        console.log(`[MinIO] Lifecycle rule applied (expire after 1 day)`);
+    } catch (err) {
+        console.warn(`[MinIO] Lifecycle rule skipped: ${err.message}`);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  THE TWO UPLOAD PATHS — this is the core lesson
+//  UPLOAD PATH A  —  POST /upload
 //
-//  PATH A  "Via Server"  →  POST /upload
-//  ──────────────────────────────────────
-//  Browser ──POST (file bytes)──▶ Express ──PutObject (file bytes)──▶ MinIO
-//  Every byte goes through this server twice.
+//  Uses @aws-sdk/lib-storage Upload, which:
+//    • Splits the file into chunks at the threshold the client sends
+//    • Uploads each chunk as a separate S3 part (multipart upload)
+//    • Assembles them server-side in MinIO
+//    • Falls back to a single PutObject if the file is below the threshold
 //
-//  PATH B  "Direct to MinIO"  →  GET /presign-upload  +  browser PUT
-//  ──────────────────────────────────────────────────────────────────
-//  Step 1:  Browser ──GET /presign-upload──▶ Express  (returns a signed URL, no bytes)
-//  Step 2:  Browser ──PUT {signed URL} (file bytes)──────────────────▶ MinIO
-//  The file bytes never touch this server.
+//  Query params:
+//    expiresIn        — presigned URL lifetime in seconds (default 30)
+//    multipartThreshold — bytes above which multipart kicks in (default 5 MB)
 //
+//  Progress is streamed back via Server-Sent Events on GET /upload-progress/:id
+//  The client opens the SSE connection before POSTing the file, then both
+//  run in parallel.
 // ═══════════════════════════════════════════════════════════════
 
-// PATH A ─ server receives the file and forwards it to MinIO
+// In-memory map: uploadId → { loaded, total, done, error }
+const progressMap = new Map();
+
+// SSE endpoint — client connects here BEFORE starting the upload
+app.get("/upload-progress/:id", (req, res) => {
+    const { id } = req.params;
+
+    res.setHeader("Content-Type",  "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection",    "keep-alive");
+    res.flushHeaders();
+
+    const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    // Poll the map every 100 ms and forward updates to the browser
+    const interval = setInterval(() => {
+        const progress = progressMap.get(id);
+        if (!progress) return;
+
+        send(progress);
+
+        if (progress.done || progress.error) {
+            clearInterval(interval);
+            progressMap.delete(id);
+            res.end();
+        }
+    }, 100);
+
+    // Clean up if client disconnects
+    req.on("close", () => {
+        clearInterval(interval);
+        progressMap.delete(id);
+    });
+});
+
 app.post("/upload", upload.single("image"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "No file provided" });
+    if (!req.file) return res.status(400).json({ error: "No file provided" });
 
-  const expiresIn = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
-  const key = `${Date.now()}-${req.file.originalname}`;
+    const expiresIn         = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn)         || 30));
+    const multipartThreshold = Math.max(1, Math.min(500,  parseInt(req.query.multipartMB)       || 5)) * 1024 * 1024;
+    const uploadId          = req.query.uploadId || `upload-${Date.now()}`;
+    const key               = `${Date.now()}-${req.file.originalname}`;
+    const isMultipart       = req.file.size >= multipartThreshold;
 
-  await s3.send(new PutObjectCommand({
-    Bucket:      BUCKET,
-    Key:         key,
-    Body:        req.file.buffer,
-    ContentType: req.file.mimetype,
-    Metadata:    { "expires-in": String(expiresIn) },
-  }));
+    progressMap.set(uploadId, { loaded: 0, total: req.file.size, done: false, error: null, isMultipart });
 
-  console.log(`[PATH A] Uploaded via server: ${key} (expiresIn: ${expiresIn}s)`);
-  res.json({ key });
+    try {
+        if (isMultipart) {
+            // ── Multipart path ───────────────────────────────────────────────────
+            // @aws-sdk/lib-storage splits Body into chunkSize pieces and uploads
+            // them concurrently (queueSize). MinIO assembles the parts atomically.
+            const managed = new Upload({
+                client: s3,
+                queueSize: 4,            // up to 4 parts in flight simultaneously
+                partSize:  multipartThreshold, // each chunk = threshold size
+                leavePartsOnError: false,
+                params: {
+                    Bucket:      BUCKET,
+                    Key:         key,
+                    Body:        req.file.buffer,
+                    ContentType: req.file.mimetype,
+                    Metadata: {
+                        "expires-in":          String(expiresIn),
+                        "upload-mode":         "multipart",
+                        "multipart-threshold": String(multipartThreshold),
+                    },
+                    // Tag each object with upload method — visible in MinIO console
+                    Tagging: "upload-mode=multipart&source=workshop",
+                },
+            });
+
+            // httpUploadProgress fires after each part lands
+            managed.on("httpUploadProgress", (p) => {
+                progressMap.set(uploadId, {
+                    loaded:      p.loaded ?? 0,
+                    total:       p.total  ?? req.file.size,
+                    done:        false,
+                    error:       null,
+                    isMultipart: true,
+                    part:        p.part ?? null,
+                });
+            });
+
+            await managed.done();
+
+        } else {
+            // ── Single PUT path ──────────────────────────────────────────────────
+            await s3.send(new PutObjectCommand({
+                Bucket:      BUCKET,
+                Key:         key,
+                Body:        req.file.buffer,
+                ContentType: req.file.mimetype,
+                Metadata: {
+                    "expires-in":  String(expiresIn),
+                    "upload-mode": "single-put",
+                },
+                Tagging: "upload-mode=single-put&source=workshop",
+            }));
+
+            progressMap.set(uploadId, {
+                loaded: req.file.size, total: req.file.size,
+                done: false, error: null, isMultipart: false,
+            });
+        }
+
+        // Mark done so the SSE stream closes cleanly
+        progressMap.set(uploadId, {
+            loaded: req.file.size, total: req.file.size,
+            done: true, error: null, isMultipart,
+        });
+
+        console.log(`[PATH A] ${isMultipart ? "Multipart" : "Single PUT"}: ${key} (${(req.file.size / 1024).toFixed(1)} KB, threshold: ${(multipartThreshold / 1024 / 1024).toFixed(1)} MB)`);
+        res.json({ key, isMultipart });
+
+    } catch (err) {
+        progressMap.set(uploadId, { loaded: 0, total: req.file.size, done: false, error: err.message, isMultipart });
+
+        if (err instanceof S3ServiceException) {
+            console.error(`[PATH A] S3 error (${err.name}): ${err.message}`);
+            return res.status(500).json({ error: err.name, detail: err.message });
+        }
+        console.error(`[PATH A] Upload failed: ${err.message}`);
+        res.status(503).json({ error: "Upload failed", detail: err.message });
+    }
 });
 
-// PATH B step 1 ─ server signs a PUT URL; browser will use it to upload directly
+// ═══════════════════════════════════════════════════════════════
+//  UPLOAD PATH B  —  GET /presign-upload  (unchanged)
+// ═══════════════════════════════════════════════════════════════
+
 app.get("/presign-upload", async (req, res) => {
-  const { filename, contentType } = req.query;
-  if (!filename) return res.status(400).json({ error: "filename required" });
+    try {
+        const { filename, contentType } = req.query;
+        if (!filename) return res.status(400).json({ error: "filename required" });
 
-  const key = `${Date.now()}-${filename}`;
-
-  // ── STUDENT EXERCISE ──────────────────────────────────────────────────
-  // Your job: sign a PUT URL so the browser can PUT the file directly to
-  // MinIO. This server never sees the file bytes — it only signs the URL.
-  //
-  //   Step 1 — build:   new PutObjectCommand({ Bucket, Key, ContentType })
-  //   Step 2 — sign:    getSignedUrl(s3, command, { expiresIn: 300 })
-  //   Step 3 — respond: res.json({ url, key })
-  //
-  // Hint: GET /gallery below does the exact same thing with GetObjectCommand.
-  // PutObjectCommand and getSignedUrl are already imported at the top.
-  // ─────────────────────────────────────────────────────────────────────
-
-  const url = await getSignedUrl(
-      s3,
-      new PutObjectCommand({
-        Bucket:      BUCKET,
-        Key:         key,
-        ContentType: String(contentType || "application/octet-stream"),
-      }),
-      { expiresIn: 300 }
-  );
-  console.log(`[PATH B] Presigned PUT issued for: ${key}`);
-  res.json({ url, key });
-});
-
-// GET /gallery — list objects and return presigned GET URLs
-app.get("/gallery", async (req, res) => {
-  const defaultExpiry = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
-  const list    = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }));
-  const objects = list.Contents ?? [];
-
-  const items = await Promise.all(
-      objects.map(async (obj) => {
-        // Use the expiry stored at upload time so each image keeps its original duration.
-        // Fall back to the slider value for objects uploaded before this was added.
-        let expiresIn = defaultExpiry;
-        try {
-          const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: obj.Key }));
-          const stored = parseInt(head.Metadata?.["expires-in"]);
-          if (!isNaN(stored)) expiresIn = stored;
-        } catch {}
+        const key = `${Date.now()}-${filename}`;
 
         const url = await getSignedUrl(
             s3,
-            new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
-            { expiresIn }
+            new PutObjectCommand({
+                Bucket:      BUCKET,
+                Key:         key,
+                ContentType: String(contentType || "application/octet-stream"),
+            }),
+            { expiresIn: 300 }
         );
-        return {
-          key:          obj.Key,
-          url,
-          size:         obj.Size,
-          lastModified: obj.LastModified,
-          etag:         obj.ETag?.replace(/"/g, ""),
-        };
-      })
-  );
 
-  items.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
-  res.json(items);
-});
+        console.log(`[PATH B] Presigned PUT issued for: ${key}`);
+        res.json({ url, key });
 
-// DELETE /objects/:key — remove an object from the bucket
-app.delete("/objects/:key", async (req, res) => {
-  const key = decodeURIComponent(req.params.key);
-  await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
-  console.log(`Deleted: ${key}`);
-  res.json({ deleted: key });
+    } catch (err) {
+        if (err instanceof S3ServiceException) {
+            return res.status(500).json({ error: err.name, detail: err.message });
+        }
+        res.status(503).json({ error: "Could not generate upload URL", detail: err.message });
+    }
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  GET /nodes  —  erasure coding demo: per-node health status
-//
-//  Each MinIO node exposes a liveness endpoint at /minio/health/live
-//  that returns HTTP 200 if the node process is running, or fails to
-//  connect if the container is stopped.
-//
-//  The 4 nodes are reachable from this host process on ports 9100–9103
-//  (mapped in docker-compose.yml; these ports bypass nginx so we can
-//  check each node individually).
-//
-//  Returns:
-//    nodes[]    — id (1–4) + status ("up" | "down") for each node
-//    ec         — erasure coding config (4 total, 2 data, 2 parity)
-//    canRead    — true if ≥ 2 nodes are up  (read  quorum = N/2)
-//    canWrite   — true if ≥ 3 nodes are up  (write quorum = N/2 + 1)
-//    upCount    — how many nodes are currently online
-//
-//  Requires Node.js 18+ for native fetch.
+//  GET /gallery
+// ═══════════════════════════════════════════════════════════════
+
+app.get("/gallery", async (req, res) => {
+    try {
+        const defaultExpiry = Math.max(5, Math.min(86400, parseInt(req.query.expiresIn) || 30));
+        const list          = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET }));
+        const objects       = list.Contents ?? [];
+
+        const items = await Promise.all(
+            objects.map(async (obj) => {
+                let expiresIn = defaultExpiry;
+                try {
+                    const head   = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: obj.Key }));
+                    const stored = parseInt(head.Metadata?.["expires-in"]);
+                    if (!isNaN(stored)) expiresIn = stored;
+                } catch { /* metadata read failure is non-fatal */ }
+
+                const url = await getSignedUrl(
+                    s3,
+                    new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
+                    { expiresIn }
+                );
+
+                return {
+                    key:          obj.Key,
+                    url,
+                    size:         obj.Size,
+                    lastModified: obj.LastModified,
+                    etag:         obj.ETag?.replace(/"/g, ""),
+                };
+            })
+        );
+
+        items.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
+        res.json(items);
+
+    } catch (err) {
+        if (err instanceof S3ServiceException) {
+            return res.status(500).json({ error: err.name, detail: err.message });
+        }
+        res.status(503).json({ error: "Could not list gallery", detail: err.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  DELETE /objects/:key
+// ═══════════════════════════════════════════════════════════════
+
+app.delete("/objects/:key", async (req, res) => {
+    try {
+        const key = decodeURIComponent(req.params.key);
+        await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+        console.log(`Deleted: ${key}`);
+        res.json({ deleted: key });
+    } catch (err) {
+        if (err instanceof S3ServiceException) {
+            return res.status(500).json({ error: err.name, detail: err.message });
+        }
+        res.status(503).json({ error: "Delete failed", detail: err.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  GET /nodes  —  erasure coding health check (unchanged)
 // ═══════════════════════════════════════════════════════════════
 
 const NODES = [
-  { id: 1, port: 9100 },
-  { id: 2, port: 9101 },
-  { id: 3, port: 9102 },
-  { id: 4, port: 9103 },
+    { id: 1, port: 9100 },
+    { id: 2, port: 9101 },
+    { id: 3, port: 9102 },
+    { id: 4, port: 9103 },
 ];
 
 app.get("/nodes", async (_req, res) => {
-  const results = await Promise.all(
-      NODES.map(async ({ id, port }) => {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 900);
-          const r = await fetch(`http://localhost:${port}/minio/health/live`, {
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-          return { id, status: r.ok ? "up" : "down" };
-        } catch {
-          // Connection refused (container stopped) or aborted (timeout)
-          return { id, status: "down" };
-        }
-      })
-  );
+    const results = await Promise.all(
+        NODES.map(async ({ id, port }) => {
+            try {
+                const controller = new AbortController();
+                const timer      = setTimeout(() => controller.abort(), 900);
+                const r          = await fetch(`http://localhost:${port}/minio/health/live`, { signal: controller.signal });
+                clearTimeout(timer);
+                return { id, status: r.ok ? "up" : "down" };
+            } catch {
+                return { id, status: "down" };
+            }
+        })
+    );
 
-  const upCount = results.filter((n) => n.status === "up").length;
+    const upCount = results.filter((n) => n.status === "up").length;
 
-  res.json({
-    nodes:    results,
-    ec:       { total: 4, data: 2, parity: 2 },
-    canRead:  upCount >= 2,   // read  quorum: any 2 of 4 shards reconstruct the object
-    canWrite: upCount >= 3,   // write quorum: need 3 of 4 to commit safely
-    upCount,
-  });
+    res.json({
+        nodes:    results,
+        ec:       { total: 4, data: 2, parity: 2 },
+        canRead:  upCount >= 2,
+        canWrite: upCount >= 3,
+        upCount,
+    });
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  START
+// ═══════════════════════════════════════════════════════════════
 
 const PORT = process.env.PORT ?? 3001;
 ensureBucket()
     .then(() => app.listen(PORT, () => console.log(`Backend running on http://localhost:${PORT}`)))
     .catch((err) => {
-      console.error("Failed to connect to MinIO:", err.message);
-      process.exit(1);
+        console.error("Failed to connect to MinIO:", err.message);
+        process.exit(1);
     });
