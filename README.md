@@ -1,6 +1,6 @@
 # MinIO Object Storage Workshop
 
-A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, direct uploads, erasure coding, and S3 API compatibility — all running locally with MinIO in Docker.
+A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, direct uploads, multipart uploads, erasure coding, and S3 API compatibility — all running locally with MinIO in Docker.
 
 ---
 
@@ -8,37 +8,55 @@ A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, di
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 - [Node.js](https://nodejs.org/) 20 or later (`node -v` to check)
+- Git (`git --version` to check)
 
 ---
 
 ## Setup
 
-### 1. Install backend dependencies
+### 1. Clone the repository
+
+```bash
+git clone <repo-url>
+cd Object_Storage_Workshop
+```
+
+### 2. Create the `.env` file
+
+Inside the `backend` folder, copy the example file and rename it to `.env`:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+The credentials are already filled in — no changes needed to get started with MinIO.
+
+### 3. Install backend dependencies
 
 ```bash
 cd backend
 npm install
+npm install @aws-sdk/lib-storage
 ```
 
-### 2. Create the backend `.env` file
+### 4. Install frontend dependencies
 
-Copy the example and you're done — the defaults work out of the box:
+Open a **second terminal**:
 
 ```bash
-cp .env.example .env
+cd frontend
+npm install
 ```
 
-The `.env.example` file contains everything you need — MinIO defaults are pre-filled and the R2 section is ready for the provider-switch demo.
+### 5. Start MinIO with Docker
 
-### 3. Start MinIO (Docker)
-
-From the project root:
+Make sure Docker Desktop is running, then from the **project root**:
 
 ```bash
 docker compose up -d
 ```
 
-This starts four MinIO nodes and an nginx proxy. Wait about 15 seconds for the cluster to become healthy, then verify:
+This starts four MinIO nodes and an nginx proxy. Wait about 15 seconds, then verify:
 
 ```bash
 docker compose ps
@@ -47,28 +65,27 @@ docker compose ps
 
 You can also open the MinIO console at **http://localhost:9001** and log in with `minioadmin / minioadmin`.
 
-### 4. Start the backend
+### 6. Start the backend
+
+In your backend terminal:
 
 ```bash
-cd backend
 npm run dev
 ```
 
 You should see:
 ```
-Bucket "workshop-images" created
+[MinIO] Bucket "workshop-images" ready
 Backend running on http://localhost:3001
 ```
 
-> If you see "Failed to connect to MinIO", wait 10 seconds and try again — the containers may still be starting.
+> If you see "Failed to connect to MinIO", wait 10–15 seconds and try again — the containers may still be starting.
 
-### 5. Install frontend dependencies and start the dev server
+### 7. Start the frontend
 
-Open a **second terminal**:
+In your frontend terminal:
 
 ```bash
-cd frontend
-npm install
 npm run dev
 ```
 
@@ -83,24 +100,19 @@ Open **http://localhost:5173** in your browser.
 | Upload via server vs direct to MinIO | Gallery tab — mode toggle |
 | Presigned GET URLs with expiry timers | Gallery tab — sidebar panel |
 | Presigned PUT URL (student exercise) | Gallery tab — Direct to MinIO mode |
+| Multipart upload threshold slider | Gallery tab — sidebar |
 | Erasure coding — live node health | Gallery tab — top panel |
 | Theory behind everything | Under the Hood tab |
 
 ---
 
-## Student exercise
-
-Students implement the `GET /presign-upload` route in `backend/server.js`. The stub and hints are already there — it takes about 3 lines of code. The app shows a green badge when it's working.
-
----
-
 ## S3 API compatibility demo — switching to Cloudflare R2
 
-This is the live demo for the "one SDK, any vendor" concept. The app switches from local MinIO to real cloud storage by changing **one line in `.env`** — no code changes.
+This is the live demo for the "one SDK, any vendor" concept. The app switches from local MinIO to real cloud storage by changing **one line in `.env`** — no code changes at all.
 
 ### Before the demo (setup)
 
-1. Log into [dash.cloudflare.com](https://dash.cloudflare.com) → **R2**
+1. Log into [dash.cloudflare.com](https://dash.cloudflare.com) → **R2 Object Storage**
 2. Create a bucket called `workshop-images`
 3. Go to **Manage R2 API Tokens** → Create a token with **Object Read & Write** on that bucket
 4. Copy your **Account ID** (shown top-right on the R2 page)
@@ -121,7 +133,7 @@ Open `backend/.env` and change one line:
 STORAGE_PROVIDER=r2
 ```
 
-Restart the backend (`Ctrl+C`, then `npm run dev`). Upload an image. The gallery loads — presigned URLs now point to `r2.cloudflarestorage.com` instead of `localhost:9000`.
+The backend restarts automatically. Upload an image — the gallery loads and presigned URLs now point to `r2.cloudflarestorage.com` instead of `localhost:9000`.
 
 Switch back to MinIO just as fast:
 
@@ -130,8 +142,6 @@ STORAGE_PROVIDER=minio
 ```
 
 The teaching point: the SDK code in `server.js` is identical for both. `S3Client`, `PutObjectCommand`, `GetObjectCommand`, `getSignedUrl` — none of it changes. You're coding against the S3 API standard, not a specific vendor.
-
-> **Note:** direct-upload via presigned PUT (PATH B) requires CORS configured on the R2 bucket. For the demo, PATH A (upload via server) and the presigned GET gallery both work without any CORS setup.
 
 ---
 
@@ -155,13 +165,13 @@ Watch the node panel update within ~2 seconds each time.
 ## Useful commands
 
 ```bash
-# Watch logs
+# Watch MinIO logs live
 docker compose logs -f minio1
 
 # Stop everything
 docker compose down
 
-# Stop and wipe stored data
+# Stop and wipe all stored data
 docker compose down -v
 ```
 
@@ -173,6 +183,6 @@ docker compose down -v
 |---|---|
 | "Failed to connect to MinIO" on backend start | Containers still starting — wait ~15 s and retry |
 | Gallery images don't load | Check MinIO is on `:9000` and all containers are healthy |
-| Direct upload fails with 403 | The `/presign-upload` exercise route may not be implemented yet |
 | Node panel shows all nodes down | Check docker-compose.yml port mappings for 9100–9103 |
+| R2 bucket not found error | Create the bucket in the Cloudflare dashboard first |
 | `npm` not recognised on Windows | Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` in PowerShell |
