@@ -8,39 +8,55 @@ A hands-on 2-hour workshop exploring object storage concepts: presigned URLs, di
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 - [Node.js](https://nodejs.org/) 20 or later (`node -v` to check)
+- Git (`git --version` to check)
 
 ---
 
 ## Setup
 
-### 1. Install backend dependencies
+### 1. Clone the repository
+
+```bash
+git clone <repo-url>
+cd Object_Storage_Workshop
+```
+
+### 2. Create the `.env` file
+
+Inside the `backend` folder, copy the example file and rename it to `.env`:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+The credentials are already filled in — no changes needed to get started with MinIO.
+
+### 3. Install backend dependencies
 
 ```bash
 cd backend
 npm install
+npm install @aws-sdk/lib-storage
 ```
 
-This installs all required packages including `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, and `@aws-sdk/s3-request-presigner`.
+### 4. Install frontend dependencies
 
-### 2. Create the backend `.env` file
-
-Copy the example — MinIO defaults are pre-filled and work out of the box:
+Open a **second terminal**:
 
 ```bash
-cp .env.example .env
+cd frontend
+npm install
 ```
 
-The `.env.example` also contains the R2 section ready for the provider-switch demo (see below).
+### 5. Start MinIO with Docker
 
-### 3. Start MinIO (Docker)
-
-From the **project root**:
+Make sure Docker Desktop is running, then from the **project root**:
 
 ```bash
 docker compose up -d
 ```
 
-This starts four MinIO nodes and an nginx proxy. Wait about 15 seconds for the cluster to become healthy, then verify:
+This starts four MinIO nodes and an nginx proxy. Wait about 15 seconds, then verify:
 
 ```bash
 docker compose ps
@@ -49,10 +65,11 @@ docker compose ps
 
 You can also open the MinIO console at **http://localhost:9001** and log in with `minioadmin / minioadmin`.
 
-### 4. Start the backend
+### 6. Start the backend
+
+In your backend terminal:
 
 ```bash
-cd backend
 npm run dev
 ```
 
@@ -64,13 +81,11 @@ Backend running on http://localhost:3001
 
 > If you see "Failed to connect to MinIO", wait 10–15 seconds and try again — the containers may still be starting.
 
-### 5. Install frontend dependencies and start the dev server
+### 7. Start the frontend
 
-Open a **second terminal**:
+In your frontend terminal:
 
 ```bash
-cd frontend
-npm install
 npm run dev
 ```
 
@@ -128,8 +143,6 @@ STORAGE_PROVIDER=minio
 
 The teaching point: the SDK code in `server.js` is identical for both. `S3Client`, `PutObjectCommand`, `GetObjectCommand`, `getSignedUrl` — none of it changes. You're coding against the S3 API standard, not a specific vendor.
 
-> **Note:** direct-upload via presigned PUT (PATH B) requires CORS configured on the R2 bucket. For the demo, PATH A (upload via server) and the presigned GET gallery both work without any CORS setup.
-
 ---
 
 ## Erasure coding demo
@@ -172,5 +185,4 @@ docker compose down -v
 | Gallery images don't load | Check MinIO is on `:9000` and all containers are healthy |
 | Node panel shows all nodes down | Check docker-compose.yml port mappings for 9100–9103 |
 | R2 bucket not found error | Create the bucket in the Cloudflare dashboard first |
-| Upload fails with `NotImplemented` on R2 | Check you're on the latest `server.js` — tagging is skipped for R2 automatically |
 | `npm` not recognised on Windows | Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` in PowerShell |
