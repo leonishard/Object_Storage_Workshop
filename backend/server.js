@@ -321,11 +321,13 @@ app.get("/gallery", async (req, res) => {
                     if (!isNaN(stored)) expiresIn = stored;
                 } catch { /* metadata read failure is non-fatal */ }
 
-                const url = await getSignedUrl(
-                    s3,
-                    new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
-                    { expiresIn }
-                );
+                const url = isR2
+                    ? `${process.env.R2_PUBLIC_URL}/${obj.Key}`
+                    : await getSignedUrl(
+                        s3,
+                        new GetObjectCommand({ Bucket: BUCKET, Key: obj.Key }),
+                        { expiresIn }
+                    );
 
                 return {
                     key:          obj.Key,
