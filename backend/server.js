@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 import cors from "cors";
 import multer from "multer";
 import {
@@ -44,6 +45,7 @@ const s3 = new S3Client(
                 accessKeyId:     process.env.R2_ACCESS_KEY,
                 secretAccessKey: process.env.R2_SECRET_KEY,
             },
+            requestHandler: new NodeHttpHandler({ connectionTimeout: 5000, requestTimeout: 30000 }),
         }
         : {
             endpoint:       process.env.MINIO_ENDPOINT,
@@ -53,6 +55,7 @@ const s3 = new S3Client(
                 secretAccessKey: process.env.MINIO_SECRET_KEY,
             },
             forcePathStyle: true,
+            requestHandler: new NodeHttpHandler({ connectionTimeout: 5000, requestTimeout: 30000 }),
         }
 );
 

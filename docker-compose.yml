@@ -89,13 +89,12 @@ services:
       start_period: 30s
 
   nginx:
-    image:         nginx:alpine
+    build:
+      context: ./nginx
     container_name: minio-nginx
     ports:
       - "9000:9000"
       - "9001:9001"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       minio1: { condition: service_healthy }
       minio2: { condition: service_healthy }
