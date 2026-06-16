@@ -117,10 +117,6 @@ docker compose down
 
 # Stop and wipe all stored data
 docker compose down -v
-
-# Stop and Start Nodes (Erasure Coding)
-docker compose stop minio1 (or minio2,3,4)
-docker compost start minio1 (or minio2,3,4)
 ```
 
 ---
